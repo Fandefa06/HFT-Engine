@@ -5,7 +5,7 @@
 
 int main() {
     OrderBook myBook;
-    const uint32_t numOrders = 1000000; // Define order count here for cleaner calculations
+    const uint32_t numOrders = 100000000; // Define order count here for cleaner calculations
     const uint32_t cancelPercent = 5;   //Probability to cancel an order
 
     // ==========================================
@@ -27,7 +27,7 @@ int main() {
 
     //Execute workload
     MarketSimulator::generateRandomOrders(myBook, numOrders, cancelPercent);
-    MarketSimulator::injectMarketShock(myBook, 500000, OrderSide::Bid, 200); 
+    //MarketSimulator::injectMarketShock(myBook, 500000, OrderSide::Bid, 200); 
 
     //Stop timer
     auto end = std::chrono::high_resolution_clock::now();
