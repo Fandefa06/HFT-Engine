@@ -1,59 +1,115 @@
-//main.cpp
+// main.cpp
+
+// main.cpp
 
 #include <iostream>
-#include <chrono> // Added for high-resolution timing
+#include <chrono>
+#include <thread>
+#include <pthread.h>
+#include <atomic>
+#include <fstream>
+#include <filesystem>
 #include "OrderBook.hpp"
 #include "MarketSimulator.hpp"
+#include "RingBuffer.hpp"
+
+void pinThread(int core_id) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+}
 
 int main() {
     OrderBook myBook;
-    const uint32_t numOrders = 10000000; // Define order count here for cleaner calculations
-    const uint32_t cancelPercent = 5;   //Probability to cancel an order
-
-    // ==========================================
-    // MODE 1: Manual Debugging (For bug hunting)
-    // ==========================================
-    /*
-    myBook.addOrder(Order(1, 100, 10, OrderSide::Bid));
-    myBook.addOrder(Order(2, 105, 5, OrderSide::Bid));
-    myBook.addOrder(Order(3, 110, 2, OrderSide::Ask));
-    */
-
-    // ==========================================
-    // MODE 2: Stress Simulation
-    // ==========================================
-    std::cout << "--- STARTING MARKET SIMULATION ---\n" << std::endl;
     
-    //Start timer
+    // The Input Pipeline
+    RingBuffer<MarketEvent, 4194304> eventBuffer; 
+    
+    // The Output Pipeline
+    RingBuffer<Trade, 4194304> tradeBuffer; 
+    myBook.setTradeBuffer(&tradeBuffer); 
+
+    const uint32_t numOrders = 100000000; 
+    const uint32_t cancelPercent = 5;   
+
+    std::cout << "--- STARTING 3-THREAD ASYNC HFT PIPELINE ---\n" << std::endl;
+    
+    std::atomic<bool> producerDone{false};
+    std::atomic<bool> consumerDone{false};
+    std::atomic<uint64_t> totalTrades{0};
+
     auto start = std::chrono::high_resolution_clock::now();
 
-    //Execute workload
-    MarketSimulator::generateRandomOrders(myBook, numOrders, cancelPercent);
-    //MarketSimulator::injectMarketShock(myBook, 500000, OrderSide::Bid, 200); 
+    // THREAD 1: PRODUCER
+    std::thread producer([&]() {
+        pinThread(0); 
+        MarketSimulator::generateRandomOrders(eventBuffer, numOrders, cancelPercent);
+        producerDone.store(true, std::memory_order_release);
+    });
 
-    //Stop timer
+    // THREAD 2: CONSUMER (The Engine)
+    std::thread consumer([&]() {
+        pinThread(2); 
+        MarketEvent ev;
+        bool running = true;
+        
+        while (running) {
+            if (eventBuffer.pop(ev)) {
+                if (ev.type == EventType::NEW_ORDER) myBook.addOrder(ev.order);
+                else if (ev.type == EventType::CANCEL_ORDER) myBook.cancelOrder(ev.order.id);
+                else if (ev.type == EventType::TERMINATE) running = false;
+            } else {
+                __builtin_ia32_pause(); 
+            }
+        }
+        consumerDone.store(true, std::memory_order_release);
+    });
+
+    // THREAD 3: TRUE BINARY ASYNC LOGGER
+    std::thread logger([&]() {
+        pinThread(4); 
+        
+        // 1. NTFS BYPASS: We are writing to the Linux RAM/Disk (/tmp/)
+        
+        std::ofstream file("/mnt/c/Proyectos personales/Limit Order Book Personal/output/trades_binary.dat", std::ios::binary);
+        
+        std::vector<char> ioBuffer(1024 * 1024); 
+        file.rdbuf()->pubsetbuf(ioBuffer.data(), ioBuffer.size());
+
+        Trade t;
+        uint64_t tradeCount = 0;
+        
+        while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
+            if (tradeBuffer.pop(t)) {
+                // 2. BINARY LOGGER: No strings, no commas. Pure memory copy.
+                file.write(reinterpret_cast<const char*>(&t), sizeof(Trade));
+                tradeCount++;
+            } else {
+                if (consumerDone.load(std::memory_order_acquire)) break; 
+                __builtin_ia32_pause();
+            }
+        }
+        totalTrades.store(tradeCount, std::memory_order_release);
+        file.close();
+    });
+
+    producer.join();
+    consumer.join();
+    logger.join();
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end - start;
 
-    //View results
-    //myBook.print();
-    //myBook.printTrades();
-
-    // Print performance metrics
-    std::cout << "--- PERFORMANCE METRICS ---" << std::endl;
-    std::cout << "Total trades executed: " << myBook.getTrades().size() << std::endl;
+    std::cout << "\n--- PERFORMANCE METRICS ---" << std::endl;
+    std::cout << "Total trades logged to BINARY: " << totalTrades.load() << std::endl;
     std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
     std::cout << "Throughput: " << (numOrders / elapsed.count()) << " ops/sec" << std::endl;
+    std::cout << "File saved at: /tmp/hft_output/trades_binary.dat" << std::endl;
     std::cout << "---------------------------" << std::endl;
-    std::cout << "Exporting result to CSV: " << std::endl;
-    myBook.exportTradesToCSV("market_simulation_results.csv");
-    std::cout << "Exporting spread to CSV: " << std::endl;
-    myBook.exportSpreadToCSV("market_spread.csv");
-    std::cout << "Done. Finishing program" << std::endl;
 
     return 0;
 }
-
 // =========================================================================
 // QUICK TERMINAL COMMANDS (WSL / LINUX)
 // =========================================================================

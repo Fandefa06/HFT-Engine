@@ -1,3 +1,4 @@
+// Inside OrderBook.hpp
 #pragma once
 #include <vector>
 #include <deque>
@@ -11,29 +12,20 @@
 constexpr Price MAX_PRICE = 200000; 
 
 struct SpreadSnap {
-    uint64_t timestamp;
-    Price bid;
-    Price ask;
-
-    SpreadSnap(uint64_t ts, Price b, Price a) 
-        : timestamp(ts), bid(b), ask(a) {}
+    // ... (Keep this as it is) ...
 };
 
 class OrderBook {
 private:
+    void* externalTradeBuffer = nullptr; // NEW: Pointer to our conveyor belt
+
     std::vector<std::deque<Order>> bids; 
     std::vector<std::deque<Order>> asks;
     std::vector<Trade> trades;
-    
     std::vector<SpreadSnap> spreadHistory;
-
     Price bestBid;
     Price bestAsk;
-
-    // EL REGRESO DEL REY: Flat Array Ledger. 
-    // Quemamos RAM para obtener acceso directo sin coste de CPU.
     std::vector<bool> cancelledOrders;
-    
     std::chrono::steady_clock::time_point startTime;
 
     void recordSpread(); 
@@ -41,6 +33,8 @@ private:
 public:
     OrderBook();
     
+    void setTradeBuffer(void* bufferPtr) { externalTradeBuffer = bufferPtr; } // NEW: Connect the pipe
+
     void addOrder(Order order);
     void cancelOrder(OrderId orderId);
     

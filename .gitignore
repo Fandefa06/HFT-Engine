@@ -5,6 +5,7 @@ build/
 .Rproj.user
 
 output/*.csv
+output/*.dat
 
 .Rhistory
 .RData
