@@ -1,3 +1,5 @@
+//main.cpp
+
 #include <iostream>
 #include <chrono> // Added for high-resolution timing
 #include "OrderBook.hpp"
@@ -5,7 +7,7 @@
 
 int main() {
     OrderBook myBook;
-    const uint32_t numOrders = 100000000; // Define order count here for cleaner calculations
+    const uint32_t numOrders = 10000000; // Define order count here for cleaner calculations
     const uint32_t cancelPercent = 5;   //Probability to cancel an order
 
     // ==========================================
@@ -33,7 +35,7 @@ int main() {
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end - start;
 
-    // View results
+    //View results
     //myBook.print();
     //myBook.printTrades();
 
@@ -51,3 +53,27 @@ int main() {
 
     return 0;
 }
+
+// =========================================================================
+// QUICK TERMINAL COMMANDS (WSL / LINUX)
+// =========================================================================
+
+// --- MODE 1: DEBUGGING ---
+// 1. Switch to Debug config:  cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+// 2. Build and Debug:         cmake --build build -j $(nproc) && gdb ./build/MotorHFT
+// (Inside GDB: type 'r' to run, 'bt' if it crashes to see the line, 'q' to exit)
+
+// --- MODE 2: ПОТУЖНО ---
+// 1. Switch to Release config: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+// 2. Build and Run:            cmake --build build -j $(nproc) && ./build/MotorHFT
+
+// --- PRO TIP: THE "ALL-IN-ONE" SWITCH (Copy-paste this to change & run) ---
+// Switch to Release and Run:
+// cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j $(nproc) && ./build/MotorHFT
+
+// Switch to Debug and Run in GDB:
+// cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j $(nproc) && gdb ./build/MotorHFT
+
+// Note: If you get "Permission denied" or CMake errors, run 'rm -rf build' 
+// while VSCode's debugger is NOT running.
+// =========================================================================
