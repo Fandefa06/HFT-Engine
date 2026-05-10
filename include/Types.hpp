@@ -1,4 +1,5 @@
 // Types.hpp
+
 #pragma once
 #include <cstdint>
 

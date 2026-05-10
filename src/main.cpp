@@ -1,7 +1,5 @@
 // main.cpp
 
-// main.cpp
-
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -14,10 +12,12 @@
 #include "RingBuffer.hpp"
 
 void pinThread(int core_id) {
+#if defined(__linux__)
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(core_id, &cpuset);
     pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+#endif
 }
 
 int main() {
@@ -82,7 +82,7 @@ int main() {
         
         while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
             if (tradeBuffer.pop(t)) {
-                // 2. BINARY LOGGER: No strings, no commas. Pure memory copy.
+                // 2. BINARY LOGGER
                 file.write(reinterpret_cast<const char*>(&t), sizeof(Trade));
                 tradeCount++;
             } else {

@@ -1,5 +1,5 @@
 // MarketSimulator.hpp
-// MarketSimulator.hpp
+
 #pragma once
 #include "RingBuffer.hpp"
 #include "Types.hpp"
