@@ -4,8 +4,14 @@ build/
 *.o
 .Rproj.user
 
-output/*.csv
-output/*.dat
+# Ignore the entire output folder
+output/
+
+# Ignore all generated analysis files in scripts
+scripts/*.html
+
+scripts/*.RData
+scripts/.Rhistory
 
 .Rhistory
 .RData
