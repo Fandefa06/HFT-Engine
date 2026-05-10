@@ -1,17 +1,22 @@
+# --- Build & IDE ---
 build/
 .vscode/
 *.exe
 *.o
 .Rproj.user
 
-# Ignore the entire output folder
+# --- HFT Data Output ---
+# We never push multi-gigabyte simulation data to GitHub
 output/
 
-# Ignore all generated analysis files in scripts
-scripts/*.html
+# --- Analysis & Privacy ---
+# We ignore the logic (.Rmd) and temporary files to keep the repo 100% C++
+# and protect your analytical secret sauce.
+scripts/*
+!scripts/*.pdf
 
-scripts/*.RData
-scripts/.Rhistory
-
+# --- R Metadata ---
 .Rhistory
 .RData
+scripts/.Rhistory
+scripts/.RData
