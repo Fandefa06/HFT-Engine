@@ -17,7 +17,7 @@ OrderBook::OrderBook() : bestBid(0), bestAsk(MAX_PRICE) {
     // RAM FIX: We no longer reserve 10M spots in memory. 
     // Trades will be immediately sent to the Async Logger thread.
     
-    cancelledOrders.resize(100000500, false); 
+    cancelledOrders.resize(1000000500, false); 
 }
 
 void OrderBook::addOrder(Order order) {

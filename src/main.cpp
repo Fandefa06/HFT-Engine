@@ -83,7 +83,7 @@ int main() {
         while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
             if (tradeBuffer.pop(t)) {
                 // 2. BINARY LOGGER
-                file.write(reinterpret_cast<const char*>(&t), sizeof(Trade));
+                //file.write(reinterpret_cast<const char*>(&t), sizeof(Trade));                 //Dont't forget that this should be uncommented, it's only for benchmark purposes
                 tradeCount++;
             } else {
                 if (consumerDone.load(std::memory_order_acquire)) break; 
@@ -105,7 +105,7 @@ int main() {
     std::cout << "Total trades logged to BINARY: " << totalTrades.load() << std::endl;
     std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
     std::cout << "Throughput: " << (numOrders / elapsed.count()) << " ops/sec" << std::endl;
-    std::cout << "File saved at: /tmp/hft_output/trades_binary.dat" << std::endl;
+    std::cout << "File saved at: /mnt/c/Proyectos personales/Limit Order Book Personal/output/trades_binary.dat" << std::endl;
     std::cout << "---------------------------" << std::endl;
 
     return 0;
