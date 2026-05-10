@@ -66,30 +66,63 @@ int main() {
         consumerDone.store(true, std::memory_order_release);
     });
 
-    // THREAD 3: TRUE BINARY ASYNC LOGGER
+    // THREAD 3: SMART BATCH BINARY ASYNC LOGGER (Size + Time)
     std::thread logger([&]() {
         pinThread(4); 
         
-        // 1. NTFS BYPASS: We are writing to the Linux RAM/Disk (/tmp/)
+        // PORTABILITY FIX: Using relative paths
+        std::filesystem::create_directories("output");
+        std::ofstream file("output/trades_binary.dat", std::ios::binary);
         
-        std::ofstream file("/mnt/c/Proyectos personales/Limit Order Book Personal/output/trades_binary.dat", std::ios::binary);
-        
-        std::vector<char> ioBuffer(1024 * 1024); 
-        file.rdbuf()->pubsetbuf(ioBuffer.data(), ioBuffer.size());
-
         Trade t;
         uint64_t tradeCount = 0;
         
+        const size_t BATCH_SIZE = 10000;
+        std::vector<Trade> batchBuffer;
+        batchBuffer.reserve(BATCH_SIZE); 
+        
+        // --- THE TIMEOUT UPGRADE ---
+        auto lastFlushTime = std::chrono::steady_clock::now();
+        const auto FLUSH_INTERVAL = std::chrono::seconds(1);
+        
         while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
+            
+            // Try to grab a trade
             if (tradeBuffer.pop(t)) {
-                // 2. BINARY LOGGER
-                //file.write(reinterpret_cast<const char*>(&t), sizeof(Trade));                 //Dont't forget that this should be uncommented, it's only for benchmark purposes
+                batchBuffer.push_back(t);
                 tradeCount++;
-            } else {
+                
+                // Condition 1: We hit 10,000 trades (Size Flush)
+                if (batchBuffer.size() >= BATCH_SIZE) {
+                    file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
+                    batchBuffer.clear();
+                    lastFlushTime = std::chrono::steady_clock::now(); // Reset the clock
+                }
+            } 
+            else {
+                // If we are here, the queue is currently empty.
                 if (consumerDone.load(std::memory_order_acquire)) break; 
+                
+                // Condition 2: The queue is empty, but do we have stale trades sitting in RAM? (Time Flush)
+                if (!batchBuffer.empty()) {
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - lastFlushTime >= FLUSH_INTERVAL) {
+                        file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
+                        batchBuffer.clear();
+                        lastFlushTime = now; // Reset the clock
+                    }
+                }
+                
+                // Sleep for a microsecond to prevent burning 100% CPU while doing nothing
                 __builtin_ia32_pause();
             }
         }
+        
+        // Final Sweep: Flush anything left over when the engine shuts down
+        if (!batchBuffer.empty()) {
+            file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
+        }
+        
         totalTrades.store(tradeCount, std::memory_order_release);
         file.close();
     });
@@ -105,7 +138,8 @@ int main() {
     std::cout << "Total trades logged to BINARY: " << totalTrades.load() << std::endl;
     std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
     std::cout << "Throughput: " << (numOrders / elapsed.count()) << " ops/sec" << std::endl;
-    std::cout << "File saved at: /mnt/c/Proyectos personales/Limit Order Book Personal/output/trades_binary.dat" << std::endl;
+    // PORTABILITY FIX: Updated terminal output path
+    std::cout << "File saved at: ./output/trades_binary.dat" << std::endl;
     std::cout << "---------------------------" << std::endl;
 
     return 0;
