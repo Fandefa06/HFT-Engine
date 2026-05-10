@@ -14,6 +14,7 @@ output/
 # and protect your analytical secret sauce.
 scripts/*
 !scripts/*.pdf
+!scripts/*.py
 
 # --- R Metadata ---
 .Rhistory

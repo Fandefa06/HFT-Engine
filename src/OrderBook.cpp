@@ -1,5 +1,7 @@
 // OrderBook.cpp
 
+// OrderBook.cpp
+
 #include "OrderBook.hpp"
 #include "RingBuffer.hpp" // Required for the pipeline
 #include <iostream>
@@ -41,7 +43,8 @@ void OrderBook::addOrder(Order order) {
                 // STREAMING PIPELINE: Send trade to Core 4 and forget it
                 if (externalTradeBuffer) {
                     auto* tb = static_cast<RingBuffer<Trade, 4194304>*>(externalTradeBuffer);
-                    while(!tb->push(Trade(order.id, bestAskOrder.id, bestAsk, matchQty))) {
+                    // FIXED: bestAskOrder.id is the Seller (passive), order.id is the Buyer (aggressor)
+                    while(!tb->push(Trade(currentSimId, order.id, bestAskOrder.id, bestAsk, matchQty))) {
                         __builtin_ia32_pause(); 
                     }
                 }
@@ -88,7 +91,8 @@ void OrderBook::addOrder(Order order) {
                 // STREAMING PIPELINE: Send trade to Core 4 and forget it
                 if (externalTradeBuffer) {
                     auto* tb = static_cast<RingBuffer<Trade, 4194304>*>(externalTradeBuffer);
-                    while(!tb->push(Trade(bestBidOrder.id, order.id, bestBid, matchQty))) {
+                    // FIXED: bestBidOrder.id is the Buyer (passive), order.id is the Seller (aggressor)
+                    while(!tb->push(Trade(currentSimId, bestBidOrder.id, order.id, bestBid, matchQty))) {
                         __builtin_ia32_pause(); 
                     }
                 }
@@ -119,6 +123,19 @@ void OrderBook::addOrder(Order order) {
             if (order.price < bestAsk) bestAsk = order.price;
         }
     }
+}
+
+void OrderBook::reset() {
+    // Fast clear for deques (does not destroy the pre-allocated vector size)
+    for (auto& q : bids) q.clear();
+    for (auto& q : asks) q.clear();
+    
+    // Fast reset for the cancellation array
+    std::fill(cancelledOrders.begin(), cancelledOrders.end(), false);
+    
+    bestBid = 0;
+    bestAsk = MAX_PRICE;
+    startTime = std::chrono::steady_clock::now();
 }
 
 void OrderBook::cancelOrder(OrderId orderId) {

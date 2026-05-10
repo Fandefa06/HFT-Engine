@@ -1,5 +1,4 @@
 // main.cpp
-
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -9,6 +8,7 @@
 #include <filesystem>
 #include "OrderBook.hpp"
 #include "MarketSimulator.hpp"
+#include "MonteCarloSimulator.hpp"
 #include "RingBuffer.hpp"
 
 void pinThread(int core_id) {
@@ -22,148 +22,150 @@ void pinThread(int core_id) {
 
 int main() {
     OrderBook myBook;
-    
-    // The Input Pipeline
     RingBuffer<MarketEvent, 4194304> eventBuffer; 
-    
-    // The Output Pipeline
     RingBuffer<Trade, 4194304> tradeBuffer; 
     myBook.setTradeBuffer(&tradeBuffer); 
 
-    const uint32_t numOrders = 100000000; 
-    const uint32_t cancelPercent = 5;   
-
-    std::cout << "--- STARTING 3-THREAD ASYNC HFT PIPELINE ---\n" << std::endl;
+    // --- QUANT COMMAND CENTER ---
+    const uint32_t numOrdersPerSim = 100000; // Total orders per simulation path
+    const uint32_t NUM_SIMULATIONS = 100;     // Number of parallel realities
     
-    std::atomic<bool> producerDone{false};
-    std::atomic<bool> consumerDone{false};
-    std::atomic<uint64_t> totalTrades{0};
+    // Choose your Reality (Uncomment ONLY ONE):
+    // MarketModel currentModel = MarketModel::GBM;
+    // MarketModel currentModel = MarketModel::MEAN_REVERSION;
+    // MarketModel currentModel = MarketModel::JUMP_DIFFUSION;
+    // MarketModel currentModel = MarketModel::CAUCHY;
+    MarketModel currentModel = MarketModel::TRENDING;
 
-    auto start = std::chrono::high_resolution_clock::now();
+    std::cout << "--- STARTING MULTI-PATH HFT MONTE CARLO ---\n" << std::endl;
+    std::atomic<uint64_t> totalTradesGlobal{0};
 
-    // THREAD 1: PRODUCER
-    std::thread producer([&]() {
-        pinThread(0); 
-        MarketSimulator::generateRandomOrders(eventBuffer, numOrders, cancelPercent);
-        producerDone.store(true, std::memory_order_release);
-    });
+    // Ensure output directory exists and initialize data file
+    std::filesystem::create_directories("output");
+    std::ofstream initFile("output/trades_binary.dat", std::ios::binary | std::ios::trunc);
+    initFile.close();
 
-    // THREAD 2: CONSUMER (The Engine)
-    std::thread consumer([&]() {
-        pinThread(2); 
-        MarketEvent ev;
-        bool running = true;
+    auto startGlobal = std::chrono::high_resolution_clock::now();
+
+    for (uint32_t sim = 0; sim < NUM_SIMULATIONS; ++sim) {
+        std::cout << "Running Simulation " << sim + 1 << " / " << NUM_SIMULATIONS << "...\r" << std::flush;
         
-        while (running) {
-            if (eventBuffer.pop(ev)) {
-                if (ev.type == EventType::NEW_ORDER) myBook.addOrder(ev.order);
-                else if (ev.type == EventType::CANCEL_ORDER) myBook.cancelOrder(ev.order.id);
-                else if (ev.type == EventType::TERMINATE) running = false;
-            } else {
-                __builtin_ia32_pause(); 
+        myBook.setSimId(sim);
+        myBook.reset();
+
+        std::atomic<bool> producerDone{false};
+        std::atomic<bool> consumerDone{false};
+        std::atomic<uint64_t> totalTradesSim{0};
+
+        // THREAD 1: PRODUCER (Stochastic Engine)
+        std::thread producer([&]() {
+            pinThread(0); 
+            MonteCarloSimulator::generateFlow(eventBuffer, numOrdersPerSim, 90, currentModel);
+            producerDone.store(true, std::memory_order_release);
+        });
+
+        // THREAD 2: CONSUMER (Matching Engine)
+        std::thread consumer([&]() {
+            pinThread(2); 
+            MarketEvent ev;
+            bool running = true;
+            while (running) {
+                if (eventBuffer.pop(ev)) {
+                    if (ev.type == EventType::NEW_ORDER) myBook.addOrder(ev.order);
+                    else if (ev.type == EventType::CANCEL_ORDER) myBook.cancelOrder(ev.order.id);
+                    else if (ev.type == EventType::TERMINATE) running = false;
+                } else { __builtin_ia32_pause(); }
             }
-        }
-        consumerDone.store(true, std::memory_order_release);
-    });
+            consumerDone.store(true, std::memory_order_release);
+        });
 
-    // THREAD 3: SMART BATCH BINARY ASYNC LOGGER (Size + Time)
-    std::thread logger([&]() {
-        pinThread(4); 
-        
-        // PORTABILITY FIX: Using relative paths
-        std::filesystem::create_directories("output");
-        std::ofstream file("output/trades_binary.dat", std::ios::binary);
-        
-        Trade t;
-        uint64_t tradeCount = 0;
-        
-        const size_t BATCH_SIZE = 10000;
-        std::vector<Trade> batchBuffer;
-        batchBuffer.reserve(BATCH_SIZE); 
-        
-        // --- THE TIMEOUT UPGRADE ---
-        auto lastFlushTime = std::chrono::steady_clock::now();
-        const auto FLUSH_INTERVAL = std::chrono::seconds(1);
-        
-        while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
+        // THREAD 3: ASYNC LOGGER (Binary Batch Writer)
+        std::thread logger([&]() {
+            pinThread(4); 
+            std::ofstream file("output/trades_binary.dat", std::ios::binary | std::ios::app);
+            Trade t;
+            uint64_t tradeCount = 0;
+            std::vector<Trade> batchBuffer;
+            batchBuffer.reserve(10000);
             
-            // Try to grab a trade
-            if (tradeBuffer.pop(t)) {
-                batchBuffer.push_back(t);
-                tradeCount++;
-                
-                // Condition 1: We hit 10,000 trades (Size Flush)
-                if (batchBuffer.size() >= BATCH_SIZE) {
-                    file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
-                    batchBuffer.clear();
-                    lastFlushTime = std::chrono::steady_clock::now(); // Reset the clock
-                }
-            } 
-            else {
-                // If we are here, the queue is currently empty.
-                if (consumerDone.load(std::memory_order_acquire)) break; 
-                
-                // Condition 2: The queue is empty, but do we have stale trades sitting in RAM? (Time Flush)
-                if (!batchBuffer.empty()) {
-                    auto now = std::chrono::steady_clock::now();
-                    if (now - lastFlushTime >= FLUSH_INTERVAL) {
+            while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
+                if (tradeBuffer.pop(t)) {
+                    batchBuffer.push_back(t);
+                    tradeCount++;
+                    if (batchBuffer.size() >= 10000) {
                         file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
                         batchBuffer.clear();
-                        lastFlushTime = now; // Reset the clock
                     }
+                } else {
+                    if (consumerDone.load(std::memory_order_acquire)) break;
+                    __builtin_ia32_pause();
                 }
-                
-                // Sleep for a microsecond to prevent burning 100% CPU while doing nothing
-                __builtin_ia32_pause();
             }
-        }
+            if (!batchBuffer.empty()) {
+                file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
+            }
+            totalTradesSim.store(tradeCount, std::memory_order_release);
+            file.close();
+        });
+
+        producer.join(); 
+        consumer.join(); 
+        logger.join();
         
-        // Final Sweep: Flush anything left over when the engine shuts down
-        if (!batchBuffer.empty()) {
-            file.write(reinterpret_cast<const char*>(batchBuffer.data()), batchBuffer.size() * sizeof(Trade));
-        }
-        
-        totalTrades.store(tradeCount, std::memory_order_release);
-        file.close();
-    });
+        totalTradesGlobal += totalTradesSim.load();
+    }
 
-    producer.join();
-    consumer.join();
-    logger.join();
+    // --- PRO FIX: SAVE METADATA FOR PYTHON ---
+    std::string modelName;
+    switch(currentModel) {
+        case MarketModel::GBM:            modelName = "GBM"; break;
+        case MarketModel::MEAN_REVERSION: modelName = "MEAN_REVERSION"; break;
+        case MarketModel::JUMP_DIFFUSION: modelName = "JUMP_DIFFUSION"; break;
+        case MarketModel::CAUCHY:         modelName = "CAUCHY"; break;
+        case MarketModel::TRENDING:       modelName = "TRENDING"; break;
+    }
+    
+    std::ofstream meta("output/metadata.txt");
+    meta << modelName;
+    meta.close();
 
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end - start;
+    auto endGlobal = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = endGlobal - startGlobal;
 
-    std::cout << "\n--- PERFORMANCE METRICS ---" << std::endl;
-    std::cout << "Total trades logged to BINARY: " << totalTrades.load() << std::endl;
-    std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
-    std::cout << "Throughput: " << (numOrders / elapsed.count()) << " ops/sec" << std::endl;
-    // PORTABILITY FIX: Updated terminal output path
-    std::cout << "File saved at: ./output/trades_binary.dat" << std::endl;
-    std::cout << "---------------------------" << std::endl;
+    // --- RESTORED SPEEDOMETER OUTPUT ---
+    uint64_t totalOrders = static_cast<uint64_t>(numOrdersPerSim) * NUM_SIMULATIONS;
+
+    std::cout << "\n\n--- MULTI-PATH COMPLETE | Model: " << modelName << " ---" << std::endl;
+    std::cout << "Total Realities Simulated: " << NUM_SIMULATIONS << std::endl;
+    std::cout << "Total Orders Processed:    " << totalOrders << std::endl;
+    std::cout << "Total Trades Logged:       " << totalTradesGlobal.load() << std::endl;
+    std::cout << "Elapsed time:              " << elapsed.count() << " seconds" << std::endl;
+    std::cout << "Average Throughput:        " << (totalOrders / elapsed.count()) << " ops/sec" << std::endl;
+    std::cout << "Metadata saved:            " << modelName << " -> output/metadata.txt" << std::endl;
+    std::cout << "---------------------------------------" << std::endl;
+
+
+    // --- AUTOMATIC VISUALIZATION ---
+    std::cout << "Launching Visualizer..." << std::endl;
+    
+    // El comando depende de si estás en Windows o Linux/WSL. 
+    // Para WSL/Linux usamos python3:
+    int result = std::system("python3 scripts/visualizer.py");
+    
+    if (result == 0) {
+        std::cout << "Visualizer executed successfully." << std::endl;
+    } else {
+        std::cerr << "Visualizer failed to execute. Check if python3 and dependencies are installed." << std::endl;
+    }
+
+
 
     return 0;
 }
+
 // =========================================================================
 // QUICK TERMINAL COMMANDS (WSL / LINUX)
 // =========================================================================
-
-// --- MODE 1: DEBUGGING ---
-// 1. Switch to Debug config:  cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-// 2. Build and Debug:         cmake --build build -j $(nproc) && gdb ./build/MotorHFT
-// (Inside GDB: type 'r' to run, 'bt' if it crashes to see the line, 'q' to exit)
-
-// --- MODE 2: ПОТУЖНО ---
-// 1. Switch to Release config: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-// 2. Build and Run:            cmake --build build -j $(nproc) && ./build/MotorHFT
-
-// --- PRO TIP: THE "ALL-IN-ONE" SWITCH (Copy-paste this to change & run) ---
-// Switch to Release and Run:
-// cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j $(nproc) && ./build/MotorHFT
-
-// Switch to Debug and Run in GDB:
-// cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j $(nproc) && gdb ./build/MotorHFT
-
-// Note: If you get "Permission denied" or CMake errors, run 'rm -rf build' 
-// while VSCode's debugger is NOT running.
+// 1. Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+// 2. Run:   cmake --build build -j $(nproc) && ./build/MotorHFT
 // =========================================================================
