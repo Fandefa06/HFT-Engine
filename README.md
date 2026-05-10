@@ -47,6 +47,8 @@ const uint32_t cancelPercent = 5; // Probability to cancel an order (0-100)
 
 MarketSimulator::generateRandomOrders(eventBuffer, numOrders, cancelPercent);
 
+```
+
 ## 🗺️ Roadmap & Future Work (Active Development)
 
 This engine is being incrementally upgraded to bridge the gap between academic simulation and institutional-grade infrastructure.
