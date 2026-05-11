@@ -5,7 +5,6 @@ import os
 import time
 
 # --- PRO FIX: AUTOMATIC MODEL DETECTION ---
-
 script_dir = os.path.dirname(os.path.abspath(__file__))
 meta_path = os.path.normpath(os.path.join(script_dir, "..", "output", "metadata.txt"))
 
@@ -17,6 +16,8 @@ else:
     CURRENT_MODEL_NAME = "UNKNOWN"
     print("Warning: metadata.txt not found. Did you run the C++ engine?")
 
+is_historical = (CURRENT_MODEL_NAME == "HISTORICAL")
+
 # Define C++ Memory Layout (48 bytes per trade with padding)
 trade_dtype = np.dtype([
     ('simId', np.uint32),
@@ -26,7 +27,7 @@ trade_dtype = np.dtype([
     ('price', np.int64),
     ('quantity', np.uint32),
     ('padding2', np.uint32),
-    ('timestamp', np.int64) 
+    ('timestamp', np.int64) # This is CPU Machine Time, NOT Binance Epoch Time!
 ])
 
 file_path = os.path.normpath(os.path.join(script_dir, "..", "output", "trades_binary.dat"))
@@ -62,31 +63,45 @@ ax_metrics.axis('off')
 final_prices = []
 sampled_paths = []
 max_paths_to_plot = min(n_simulations, 100) 
-sample_step = 500 # Skip points for rendering performance
+sample_step = 500 # Skip points for rendering performance to bypass the Pixel Problem
 
 print(f"Processing and sampling {max_paths_to_plot} paths...")
 
+# Dynamic styling
+if n_simulations == 1:
+    path_color = 'midnightblue' 
+    path_alpha = 1.0            
+    path_lw = 1.5               
+else:
+    path_color = 'darkblue'     
+    path_alpha = 0.15           
+    path_lw = 1.0               
+
 for i in range(max_paths_to_plot):
     sim_id = unique_sims[i]
-    # Efficient slice using numpy boolean indexing
-    sim_prices = mmap_data['price'][mmap_data['simId'] == sim_id]
+    mask = (mmap_data['simId'] == sim_id)
+    sim_prices = mmap_data['price'][mask]
     
     final_prices.append(sim_prices[-1])
     
-    # Path plotting (sampled)
-    ax_paths.plot(sim_prices[::sample_step], color='royalblue', alpha=0.10, linewidth=1)
+    # Plot using standard index (Trade Sequence) to avoid CPU Timestamp hallucination
+    ax_paths.plot(sim_prices[::sample_step], color=path_color, alpha=path_alpha, linewidth=path_lw)
     sampled_paths.append(sim_prices[::sample_step])
 
-# Align paths for dispersion matrix (Euler-Maruyama step alignment)
+# Align paths for dispersion matrix
 min_length = min([len(p) for p in sampled_paths])
 price_matrix = np.array([p[:min_length] for p in sampled_paths])
 
 # --- PANEL 1 & 2: PATHS & PROBABILITY DENSITY ---
-ax_paths.set_title(f'Simulated Realities ({CURRENT_MODEL_NAME})', fontsize=16)
+if is_historical:
+    ax_paths.set_title('Historical Price Action (Real Market Data)', fontsize=16)
+else:
+    ax_paths.set_title(f'Simulated Realities ({CURRENT_MODEL_NAME})', fontsize=16)
+
 ax_paths.set_ylabel('Execution Price (Ticks)', fontsize=14)
 ax_paths.grid(True, linestyle='--', alpha=0.5)
 
-ax_hist.hist(final_prices, bins=40, orientation='horizontal', color='darkorange', edgecolor='black', alpha=0.7)
+ax_hist.hist(final_prices, bins=40 if n_simulations > 1 else 1, orientation='horizontal', color='darkorange', edgecolor='black', alpha=0.7)
 mean_p = np.mean(final_prices)
 median_p = np.median(final_prices)
 ax_hist.axhline(y=mean_p, color='red', linestyle='--', label=f'Mean: {mean_p:.2f}')
@@ -103,42 +118,71 @@ p75 = np.percentile(price_matrix, 75, axis=0)
 p05 = np.percentile(price_matrix, 5, axis=0)
 p95 = np.percentile(price_matrix, 95, axis=0)
 
-ax_disp.plot(p50, color='black', linewidth=2, label='Median Path')
-ax_disp.fill_between(range(min_length), p25, p75, color='blue', alpha=0.3, label='Interquartile Range (25th-75th)')
-ax_disp.fill_between(range(min_length), p05, p95, color='lightblue', alpha=0.15, label='Extreme Dispersion (5th-95th)')
+x_axis_disp = range(min_length)
+
+if is_historical:
+    ax_disp.plot(x_axis_disp, p50, color='black', linewidth=2, label='Real Market Path')
+    ax_disp.set_xlabel('Trade Sequence (Sampled)', fontsize=14)
+else:
+    ax_disp.plot(x_axis_disp, p50, color='black', linewidth=2, label='Median Path')
+    ax_disp.fill_between(x_axis_disp, p25, p75, color='blue', alpha=0.3, label='Interquartile Range (25th-75th)')
+    ax_disp.fill_between(x_axis_disp, p05, p95, color='lightblue', alpha=0.15, label='Extreme Dispersion (5th-95th)')
+    ax_disp.set_xlabel('Normalized Sampled Sequence', fontsize=14)
+
 ax_disp.set_title('Market Dispersion Over Time', fontsize=16)
-ax_disp.set_xlabel('Normalized Sampled Sequence', fontsize=14)
 ax_disp.legend(loc='upper left')
 ax_disp.grid(True, linestyle='--', alpha=0.5)
 
-# --- PANEL 4: DEEP STATISTICAL MOMENTS ---
+# --- PANEL 4: DEEP STATISTICAL MOMENTS (DYNAMIC) ---
 fp_series = pd.Series(final_prices)
 start_price = price_matrix[0][0]
-win_rate = (fp_series > start_price).mean() * 100
 
-metrics_text = (
-    f"--- DEEP STATISTICAL MOMENTS ---\n\n"
-    f"Market Model:      {CURRENT_MODEL_NAME}\n"
-    f"Initial Start:     {start_price:,.2f}\n"
-    f"Mean Final:        {mean_p:,.2f}\n"
-    f"Median Final:      {median_p:,.2f}\n"
-    f"Absolute Max:      {fp_series.max():,.2f}\n"
-    f"Absolute Min:      {fp_series.min():,.2f}\n\n"
-    f"--- RISK & VOLATILITY ---\n\n"
-    f"Standard Dev (σ):  {fp_series.std():,.2f}\n"
-    f"Skewness:          {fp_series.skew():.4f}\n"
-    f"Kurtosis:          {fp_series.kurtosis():.4f}\n\n"
-    f"--- OUTCOMES ---\n\n"
-    f"Prob. Appreciation: {win_rate:.1f}%\n"
-    f"Total Data Points:  {total_trades:,}\n"
-    f"Script Latency:     {time.time() - start_time:.2f}s"
-)
+if is_historical:
+    final_close = fp_series.iloc[0]
+    total_return_pct = ((final_close - start_price) / start_price) * 100
+    
+    metrics_text = (
+        f"--- HISTORICAL TIMELINE ---\n\n"
+        f"Data Source:       BINANCE REAL\n"
+        f"X-Axis format:     Trade Sequence\n\n"
+        f"--- PRICE ACTION (Ticks) ---\n\n"
+        f"Initial Start:     {start_price:,.2f}\n"
+        f"Final Close:       {final_close:,.2f}\n"
+        f"Absolute Max:      {mmap_data['price'].max():,.2f}\n"
+        f"Absolute Min:      {mmap_data['price'].min():,.2f}\n\n"
+        f"--- OUTCOMES ---\n\n"
+        f"Total Return:      {total_return_pct:+.2f}%\n"
+        f"Total Trades:      {total_trades:,}\n"
+        f"Script Latency:    {time.time() - start_time:.2f}s"
+    )
+else:
+    win_rate = (fp_series > start_price).mean() * 100
+    std_val = fp_series.std() if n_simulations > 1 else 0.0
+    skew_val = fp_series.skew() if n_simulations > 2 else 0.0
+    kurt_val = fp_series.kurtosis() if n_simulations > 3 else 0.0
+    
+    metrics_text = (
+        f"--- DEEP STATISTICAL MOMENTS ---\n\n"
+        f"Market Model:      {CURRENT_MODEL_NAME}\n"
+        f"Initial Start:     {start_price:,.2f}\n"
+        f"Mean Final:        {mean_p:,.2f}\n"
+        f"Median Final:      {median_p:,.2f}\n"
+        f"Absolute Max:      {fp_series.max():,.2f}\n"
+        f"Absolute Min:      {fp_series.min():,.2f}\n\n"
+        f"--- RISK & VOLATILITY ---\n\n"
+        f"Standard Dev (σ):  {std_val:,.2f}\n"
+        f"Skewness:          {skew_val:.4f}\n"
+        f"Kurtosis:          {kurt_val:.4f}\n\n"
+        f"--- OUTCOMES ---\n\n"
+        f"Prob. Appreciation: {win_rate:.1f}%\n"
+        f"Total Data Points:  {total_trades:,}\n"
+        f"Script Latency:     {time.time() - start_time:.2f}s"
+    )
 
 ax_metrics.text(0.1, 0.9, metrics_text, fontsize=14, fontfamily='monospace', 
                 verticalalignment='top', bbox=dict(boxstyle='round,pad=1', facecolor='#f8f9fa', edgecolor='black'))
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-# The Fix: output image now uses the dynamic model name correctly
 output_img = os.path.normpath(os.path.join(script_dir, "..", "output", f"report_{CURRENT_MODEL_NAME}.png"))
 plt.savefig(output_img, dpi=200, bbox_inches='tight')
 

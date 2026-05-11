@@ -4,6 +4,7 @@ build/
 *.exe
 *.o
 .Rproj.user
+*.csv
 
 # --- HFT Data Output ---
 # We never push multi-gigabyte simulation data to GitHub
