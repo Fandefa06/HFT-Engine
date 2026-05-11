@@ -1,9 +1,0 @@
-# 1. Remove everything from the git index (but keep your local files)
-git rm -r --cached .
-
-# 2. Add everything back (this time it will respect the new .gitignore)
-git add .
-
-# 3. Commit and push
-git commit -m "chore: cleanup repository and hide Rmd logic"
-git push origin main

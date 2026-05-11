@@ -5,6 +5,10 @@ build/
 *.o
 .Rproj.user
 *.csv
+*.bin
+*.zip
+data/
+precompiler
 
 # --- HFT Data Output ---
 # We never push multi-gigabyte simulation data to GitHub
