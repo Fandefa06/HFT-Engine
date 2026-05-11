@@ -62,7 +62,7 @@ bool RUN_HISTORICAL = true;
 const uint32_t numOrdersPerSim = 1000000; 
 const uint32_t NUM_SIMULATIONS = 1000;    
 MarketModel currentModel = MarketModel::GBM;
-
+```
 ## 🗺️ Roadmap & Future Work (Active Development)
 
 This engine is being incrementally upgraded to bridge the gap between academic simulation and institutional-grade infrastructure.
