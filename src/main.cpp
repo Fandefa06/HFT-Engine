@@ -279,8 +279,11 @@ int main() {
 // =========================================================================
 // QUICK TERMINAL COMMANDS (WSL / LINUX)
 // =========================================================================
-// 1. Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-// 2. Run:   cmake --build build -j $(nproc) && ./build/MotorHFT
+// 1. Build:                            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+// 2. Run:                              cmake --build build -j $(nproc) && ./build/MotorHFT
+// 3. Download:                         python3 scripts/downloader.py
+// 4. Download without terminal open:   nohup python3 scripts/downloader.py &
+// 5. Tracking nohup:                   tail -f nohup.out
 // =========================================================================
 
 // =========================================================================

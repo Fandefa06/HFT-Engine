@@ -13,12 +13,12 @@ warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 SYMBOL = "ETHUSDT"
 
 # [TEST MODE]: Uncomment these two lines to test just 2 months right now
-YEARS = [2025]
-MONTHS = [1, 2]
+# YEARS = range(2025, 2025)
+# MONTHS = range(1,1)
 
-# [OVERNIGHT MODE]: Uncomment these to download EVERYTHING (From 2017 to 2026)
-# YEARS = range(2017, 2027) 
-# MONTHS = range(1, 13)
+# [OVERNIGHT MODE]: Uncomment these to download EVERYTHING
+YEARS = range(2024, 2027) 
+MONTHS = range(1, 13)
 # ==========================================
 
 DATA_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
