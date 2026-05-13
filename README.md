@@ -4,10 +4,19 @@ A low-latency Limit Order Book (LOB) built in C++ designed for high-throughput f
 
 ## 🚀 Performance Metrics
 - **Engine Throughput (Monte Carlo):** ~12,500,000 ops/sec (Pure RAM matching without I/O).
-- **Pipeline Throughput (Async Logging):** ~5,400,000 ops/sec (Matching + Smart Binary Disk Logging).
-- **Historical Replay Throughput:** ~1,470,000 ops/sec (Reading multi-gigabyte pure binary real-world market data directly from SSD into the matching engine).
+- **Pipeline Throughput (Async Logging):** ~8,830,000 ops/sec (Matching + Smart Binary Disk Logging).
+- **Historical Replay Throughput:** ~7,980,000 ops/sec (Reading multi-gigabyte pure binary data).
 - **Capacity:** Stress-tested with continuous **1 Billion+** order injections and 20GB+ historical datasets.
+- **Hybrid Cloud Generation:** Dynamically matches historical order counts (e.g., 143M+ orders) across parallel universes.
 - **Latency:** Sub-microsecond matching for top-of-book orders via L1 Cache optimization.
+
+## 📖 Glossary & Technical Definitions
+
+- **Limit Order Book (LOB):** The central ledger where resting Buy (Bid) and Sell (Ask) orders are matched.
+- **Order Flow Imbalance (OFI):** A metric tracking net aggressive buying vs selling pressure, normalized from -1 to 1.
+- **DNA Extraction:** Reverse-engineering historical returns to inject real Drift and Volatility into simulations.
+- **False Sharing:** A CPU bottleneck prevented here using hardware alignment (alignas(64)).
+- **SPSC Ring Buffer:** A lock-free structure allowing the engine and logger to communicate without pausing.
 
 ## 🛠️ Features
 - **3-Core Async Pipeline:** Segregated execution threads (Producer -> Engine -> Logger) to prevent I/O blocking.
@@ -43,6 +52,14 @@ A low-latency Limit Order Book (LOB) built in C++ designed for high-throughput f
 - **Decision:** Never read CSV files in the hot path. Created a standalone `PreCompiler.cpp`.
 - **Why:** Text parsing (`std::stod`, `std::stoull`) is a massive CPU bottleneck. The Pre-Compiler does the dirty work once, converting heavy 20GB+ CSVs into ultra-compact, 21-byte C++ structs (`.bin`). The main engine directly copies these bytes from the SSD to the CPU, maximizing hardware bandwidth.
 
+### 6. Template-Based Asset Policies
+- **Decision:** Used C++ templates (OrderBook<ETH_Policy>) for compile-time asset rules.
+- **Why:** Bypasses runtime branching for tick sizes and price bounds, maximizing speed.
+
+### 7. AI Nutrients & Bot Injection
+- **Decision:** Compressed data into 64-byte StateVector structs (OHLCV + OFI).
+- **Why: Bridges** simulation and execution, allowing bots to react synchronously to LOB changes.
+
 ## 📊 Scalability Note
 The engine is capable of generating massive datasets (e.g., **multi-gigabyte `.dat` files**). Because the output is now highly-optimized pure binary, standard spreadsheet software like Excel cannot read it. It is highly recommended to use the included **Python visualizer (`scripts/visualizer.py`)** which uses memory-mapping to instantly deserialize the data into arrays for quantitative analysis without filling up your RAM.
 
@@ -59,8 +76,7 @@ bool RUN_HISTORICAL = true;
 // =========================================================================
 
 // If Monte Carlo is selected:
-const uint32_t numOrdersPerSim = 1000000; 
-const uint32_t NUM_SIMULATIONS = 1000;    
+const uint32_t numOrdersPerSim = 1000000;   
 MarketModel currentModel = MarketModel::GBM;
 ```
 ## 🗺️ Roadmap & Future Work (Active Development)
@@ -70,8 +86,8 @@ This engine is being incrementally upgraded to bridge the gap between academic s
 *   **Phase 1: Networking & Real-World Data Ingestion**
     *   Build a Market Data Handler in Python/C++ to ingest live order flow via WebSockets (e.g., Polymarket API).
     *   Implement a lightweight FIX Protocol parser for standardized exchange messaging.
-*   **Phase 2: Quantitative Research & AI Integration**
-    *   Develop a stochastic Monte Carlo simulator (using Poisson processes and Normal distributions) for realistic stress-testing.
-    *   Design a Market Making Bot leveraging **Reinforcement Learning (RL)** to dynamically adjust spread width and inventory skewness based on self-play PnL metrics.
+*   **Phase 2: Quantitative Research & AI Integration (In Progress)**
+    *   Develop stochastic Monte Carlo simulator (Completed)
+    *  Integrate C++ execution bots (SimpleBot) to track PnL (Next Step)
 
 ## AND MORE TO COME
