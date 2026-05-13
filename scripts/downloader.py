@@ -10,15 +10,15 @@ warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 # ==========================================
 # --- CONFIGURATION ZONE ---
 # ==========================================
-SYMBOL = "ETHUSDT"
+SYMBOL = "BTCUSDT"
 
 # [TEST MODE]: Uncomment these two lines to test just 2 months right now
 # YEARS = range(2025, 2025)
 # MONTHS = range(1,1)
 
 # [OVERNIGHT MODE]: Uncomment these to download EVERYTHING
-YEARS = range(2024, 2027) 
-MONTHS = range(1, 13)
+YEARS = range(2026, 2027)
+MONTHS = range (1,2)
 # ==========================================
 
 DATA_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
