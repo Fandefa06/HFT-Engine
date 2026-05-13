@@ -52,6 +52,7 @@ struct MarketEvent {
 // =========================================================================
 struct StateVector {
     uint32_t simId;
+    uint32_t padding;         // <--- CRITICAL FIX: Memory alignment for Python
     uint64_t bucketId;        
     int64_t openPrice;
     int64_t highPrice;
@@ -61,6 +62,6 @@ struct StateVector {
     int64_t orderFlowImbalance; 
     
     // INT64_MAX ensures the first trade sets the real lowPrice
-    StateVector() : simId(0), bucketId(0), openPrice(0), highPrice(0), 
+    StateVector() : simId(0), padding(0), bucketId(0), openPrice(0), highPrice(0), 
                     lowPrice(INT64_MAX), closePrice(0), totalVolume(0), orderFlowImbalance(0) {}
 };
