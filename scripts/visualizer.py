@@ -136,4 +136,4 @@ plt.savefig(output_img, dpi=150)
 
 print(f"Analysis Complete! Multi-panel report saved: {output_img}")
 print("Opening report...")
-os.system(f"explorer.exe $(wslpath -w '{output_img}')")
+os.system(f"explorer.exe $(wslpath -w '{output_img}') &")
