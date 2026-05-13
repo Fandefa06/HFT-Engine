@@ -19,7 +19,7 @@ include_directories(include)
 # 6. Executable Definition
 add_executable(MotorHFT 
     src/main.cpp
-    src/OrderBook.cpp
+    
 )
 
 # 7. REQUIRED FOR HFT: Link the hardware threading libraries
