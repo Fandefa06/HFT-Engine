@@ -4,65 +4,92 @@
 #include <deque>
 #include <string>
 #include <chrono>
+#include <algorithm> 
 #include "Types.hpp"
-#include "Order.hpp"
 #include "Trade.hpp"
 #include "RingBuffer.hpp"
-#include "AssetPolicies.hpp" // Inject our policies
+#include "AssetPolicies.hpp" 
 
-// The Template Definition - 'Asset' represents our Policy (ETH, BTC, etc.)
 template <typename Asset>
 class OrderBook {
 private:
     void* externalTradeBuffer = nullptr; 
     uint32_t currentSimId = 0; 
     
-    // Dynamically sized based on the specific Asset Policy!
     std::vector<std::deque<Order>> bids; 
     std::vector<std::deque<Order>> asks;
-    std::vector<bool> cancelledOrders;
     
-    Price bestBid;
-    Price bestAsk;
+    // TAGGING ARRAY: Stores OrderId instead of bool to prevent collisions
+    std::vector<OrderId> cancelledOrders;
+    
+    Price bestBidIdx;
+    Price bestAskIdx;
+    Price vectorSize;
+
+    Price minPriceIdxSeen;
+    Price maxPriceIdxSeen;
+    OrderId maxOrderIdSeen;
 
 public:
-    OrderBook() : bestBid(0), bestAsk(Asset::maxPriceTicks) {
-        // We allocate EXACTLY what the asset needs, not a flat 2 Million
-        bids.resize(Asset::maxPriceTicks);
-        asks.resize(Asset::maxPriceTicks);
-        
-        // RAM FIX: Cap the order array to prevent 1TB allocation in Monte Carlo
-        cancelledOrders.resize(Asset::maxOrdersInRAM, false); 
+    OrderBook() : maxOrderIdSeen(0) {
+        vectorSize = Asset::maxPriceTicks - Asset::minPriceTicks;
+        bestBidIdx = 0;
+        bestAskIdx = vectorSize;
+        minPriceIdxSeen = vectorSize;
+        maxPriceIdxSeen = 0;
+
+        bids.resize(vectorSize);
+        asks.resize(vectorSize);
+        cancelledOrders.resize(Asset::maxOrdersInRAM, 0); // Initialize with ID 0
     }
 
     void setTradeBuffer(void* bufferPtr) { externalTradeBuffer = bufferPtr; }
     void setSimId(uint32_t id) { currentSimId = id; }
 
     void reset() {
-        for (auto& q : bids) q.clear();
-        for (auto& q : asks) q.clear();
-        std::fill(cancelledOrders.begin(), cancelledOrders.end(), false);
-        bestBid = 0;
-        bestAsk = Asset::maxPriceTicks;
+        if (maxPriceIdxSeen >= minPriceIdxSeen) {
+            for (Price p = minPriceIdxSeen; p <= maxPriceIdxSeen; ++p) {
+                // SWAP TRICK: Forces OS to reclaim RAM immediately
+                std::deque<Order>().swap(bids[p]);
+                std::deque<Order>().swap(asks[p]);
+            }
+        }
+        
+        if (maxOrderIdSeen > 0) {
+            uint64_t clearLimit = std::min(maxOrderIdSeen + 1, Asset::maxOrdersInRAM);
+            std::fill(cancelledOrders.begin(), cancelledOrders.begin() + clearLimit, 0);
+        }
+
+        bestBidIdx = 0;
+        bestAskIdx = vectorSize;
+        minPriceIdxSeen = vectorSize;
+        maxPriceIdxSeen = 0;
+        maxOrderIdSeen = 0;
     }
 
     void cancelOrder(OrderId orderId) {
-        // Safety bounds check to prevent segfaults with weird data
-        if (orderId < Asset::maxOrdersInRAM) {
-            cancelledOrders[orderId] = true;
-        }
+        uint64_t safeId = orderId % Asset::maxOrdersInRAM;
+        cancelledOrders[safeId] = orderId; // Store actual ID tag
+        if (safeId > maxOrderIdSeen) maxOrderIdSeen = safeId; 
     }
 
     void addOrder(Order order) {
-        // Ignore corrupted out-of-bounds orders safely
-        if (order.id >= Asset::maxOrdersInRAM || order.price >= Asset::maxPriceTicks) return;
-        if (cancelledOrders[order.id]) return;
+        if (order.price < Asset::minPriceTicks || order.price >= Asset::maxPriceTicks) return;
+        
+        // MODULO TAG CHECK: Verifies exact ID match to prevent ghost cancellations
+        if (cancelledOrders[order.id % Asset::maxOrdersInRAM] == order.id) return;
+
+        Price pIdx = order.price - Asset::minPriceTicks;
+
+        if (pIdx < minPriceIdxSeen) minPriceIdxSeen = pIdx;
+        if (pIdx > maxPriceIdxSeen) maxPriceIdxSeen = pIdx;
+        if (order.id > maxOrderIdSeen) maxOrderIdSeen = order.id;
 
         if (order.side == OrderSide::Bid) {
-            while (order.quantity > 0 && bestAsk <= order.price) {
-                std::deque<Order>& askQueue = asks[bestAsk];
+            while (order.quantity > 0 && bestAskIdx <= pIdx) {
+                std::deque<Order>& askQueue = asks[bestAskIdx];
 
-                while (!askQueue.empty() && cancelledOrders[askQueue.front().id]) {
+                while (!askQueue.empty() && cancelledOrders[askQueue.front().id % Asset::maxOrdersInRAM] == askQueue.front().id) {
                     askQueue.pop_front();
                 }
 
@@ -72,7 +99,8 @@ public:
                     
                     if (externalTradeBuffer) {
                         auto* tb = static_cast<RingBuffer<Trade, 4194304>*>(externalTradeBuffer);
-                        while(!tb->push(Trade(currentSimId, order.id, bestAskOrder.id, bestAsk, matchQty))) {
+                        Price realTradePrice = bestAskIdx + Asset::minPriceTicks;
+                        while(!tb->push(Trade(currentSimId, order.id, bestAskOrder.id, realTradePrice, matchQty))) {
                             __builtin_ia32_pause(); 
                         }
                     }
@@ -87,23 +115,25 @@ public:
                 }
 
                 if (askQueue.empty()) {
-                    while (bestAsk < Asset::maxPriceTicks && asks[bestAsk].empty()) {
-                        bestAsk++;
+                    // BOUNDED SCAN: Only search through prices actually touched
+                    while (bestAskIdx <= maxPriceIdxSeen && asks[bestAskIdx].empty()) {
+                        bestAskIdx++;
                     }
-                    if (bestAsk == Asset::maxPriceTicks) break; 
+                    if (bestAskIdx > maxPriceIdxSeen) bestAskIdx = vectorSize;
+                    if (bestAskIdx == vectorSize) break; 
                 }
             }
             
             if (order.quantity > 0) {
-                bids[order.price].push_back(order);
-                if (order.price > bestBid) bestBid = order.price;
+                bids[pIdx].push_back(order);
+                if (pIdx > bestBidIdx) bestBidIdx = pIdx;
             }
         } 
-        else { // Logic for ASK order (Seller)
-            while (order.quantity > 0 && bestBid >= order.price && bestBid > 0) {
-                std::deque<Order>& bidQueue = bids[bestBid];
+        else {
+            while (order.quantity > 0 && bestBidIdx >= pIdx && bestBidIdx > 0) {
+                std::deque<Order>& bidQueue = bids[bestBidIdx];
 
-                while (!bidQueue.empty() && cancelledOrders[bidQueue.front().id]) {
+                while (!bidQueue.empty() && cancelledOrders[bidQueue.front().id % Asset::maxOrdersInRAM] == bidQueue.front().id) {
                     bidQueue.pop_front();
                 }
 
@@ -113,7 +143,8 @@ public:
                     
                     if (externalTradeBuffer) {
                         auto* tb = static_cast<RingBuffer<Trade, 4194304>*>(externalTradeBuffer);
-                        while(!tb->push(Trade(currentSimId, bestBidOrder.id, order.id, bestBid, matchQty))) {
+                        Price realTradePrice = bestBidIdx + Asset::minPriceTicks;
+                        while(!tb->push(Trade(currentSimId, bestBidOrder.id, order.id, realTradePrice, matchQty))) {
                             __builtin_ia32_pause(); 
                         }
                     }
@@ -128,16 +159,18 @@ public:
                 }
 
                 if (bidQueue.empty()) {
-                    while (bestBid > 0 && bids[bestBid].empty()) {
-                        bestBid--;
+                    // BOUNDED SCAN: Only search through prices actually touched
+                    while (bestBidIdx >= minPriceIdxSeen && bids[bestBidIdx].empty()) {
+                        bestBidIdx--;
                     }
-                    if (bestBid == 0) break; 
+                    if (bestBidIdx < minPriceIdxSeen) bestBidIdx = 0;
+                    if (bestBidIdx == 0) break; 
                 }
             }
 
             if (order.quantity > 0) {
-                asks[order.price].push_back(order);
-                if (order.price < bestAsk) bestAsk = order.price;
+                asks[pIdx].push_back(order);
+                if (pIdx < bestAskIdx) bestAskIdx = pIdx;
             }
         }
     }
