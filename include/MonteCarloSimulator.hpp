@@ -3,6 +3,7 @@
 #include <random>
 #include <cmath>
 #include <atomic>
+#include <algorithm>
 #include "Types.hpp"
 #include "RingBuffer.hpp"
 
@@ -27,38 +28,58 @@ public:
         
         thread_local std::mt19937_64 rng(std::random_device{}());
         std::uniform_int_distribution<uint32_t> cancelDist(1, 100);
-        std::uniform_int_distribution<uint32_t> sideDist(0, 1);
-        std::uniform_real_distribution<double> jumpChance(0.0, 1.0); 
         
+        // 50/50 perfecto para mantener el flujo de liquidez del OrderBook intacto
+        std::uniform_int_distribution<uint32_t> sideDist(0, 1); 
+        
+        std::uniform_real_distribution<double> jumpChance(0.0, 1.0); 
         std::normal_distribution<double> noise(0.0, 1.0);
         std::cauchy_distribution<double> cauchyNoise(0.0, 1.0); 
         
         double currentPrice = static_cast<double>(startPrice);
         uint64_t orderCounter = 1;
 
+        // --- DECODIFICACIÓN GEOMÉTRICA EXACTA ---
+        // Recuperamos los porcentajes puros
+        double trueDriftPerBucket = avgDrift / 100.0; 
+        double trueVolPerBucket = stdDev / 5000.0;
+        
+        // Escalado por orden (aprox 2000 órdenes reales = 1 bucket de 1000 trades)
+        double driftPerOrder = trueDriftPerBucket / 2000.0;
+        double volPerOrder = trueVolPerBucket / std::sqrt(2000.0);
+
         while (isRunning.load(std::memory_order_relaxed)) {
             
-            // Usamos el ADN inyectado en lugar de valores fijos
-            double drift = avgDrift;
-            double volatility = stdDev; 
+            double pctChange = 0.0;
 
             if (model == MarketModel::GBM) {
-                currentPrice += drift + (volatility * noise(rng));
+                pctChange = driftPerOrder + (volPerOrder * noise(rng));
             } else if (model == MarketModel::MEAN_REVERSION) {
                 double meanPrice = static_cast<double>(startPrice);
-                currentPrice += 0.05 * (meanPrice - currentPrice) + (volatility * noise(rng));
+                pctChange = 0.0001 * ((meanPrice - currentPrice) / currentPrice) + (volPerOrder * noise(rng));
             } else if (model == MarketModel::TRENDING) {
-                currentPrice += 0.5 + drift + (volatility * noise(rng)); 
+                pctChange = (driftPerOrder * 1.5) + (volPerOrder * noise(rng)); 
             } else if (model == MarketModel::JUMP_DIFFUSION) {
-                double step = drift + (volatility * noise(rng));
-                if (jumpChance(rng) < 0.001) { 
-                    step += noise(rng) * 200.0; 
+                pctChange = driftPerOrder + (volPerOrder * noise(rng));
+                
+                // EL BUG ESTABA AQUÍ: 0.0001 generaba demasiados saltos y el precio se hundía.
+                // Ajustado a 0.000002 (~60 saltos por simulación, perfecto para el crash de Enero 2022).
+                if (jumpChance(rng) < 0.000002) { 
+                    double jumpPct = std::abs(noise(rng)) * trueVolPerBucket * 3.0; 
+                    pctChange += (driftPerOrder < 0) ? -jumpPct : jumpPct; 
                 }
-                currentPrice += step;
             } else if (model == MarketModel::CAUCHY) {
-                currentPrice += drift + (volatility * cauchyNoise(rng) * 0.1); 
+                pctChange = driftPerOrder + (volPerOrder * cauchyNoise(rng) * 0.1); 
             }
 
+            // Aplicar el cambio geométrico
+            currentPrice += currentPrice * pctChange;
+
+            // EL SEGUNDO BUG (EL CUELGUE): Límite de seguridad estricto.
+            // Garantiza que el precio nunca baje de tu ETH_Policy::minPriceTicks (100.000)
+            // ni supere el maxPriceTicks (1.000.000), salvando al OrderBook de congelarse.
+            currentPrice = std::clamp(currentPrice, 105000.0, 950000.0);
+            
             Price tickPrice = static_cast<Price>(std::round(currentPrice));
 
             if (cancelDist(rng) <= cancelPercent && orderCounter > 100) {
