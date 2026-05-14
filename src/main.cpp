@@ -1,7 +1,7 @@
 // main.cpp
 
 // ====================================================================
-// --- VERY IMPORTANT, UPDATE README ---
+// --- VERY IMPORTANT: NOTHING FOR NOW
 // ====================================================================
 
 #include <iostream>
@@ -54,7 +54,7 @@ int main() {
     // =========================================================================
     // --- BINARY FILE TO OBTAIN THE DATA ---
     // =========================================================================
-    std::string binFilename = "data/ETH_FULL_2024.bin";
+    std::string binFilename = "data/ETHUSDT-trades-2022-01.bin";
     // =========================================================================
 
 
@@ -70,19 +70,24 @@ int main() {
     // =========================================================================
     // DYNAMIC MATCHING: We start at 0 and auto-detect the size of the history!
     uint64_t dynamicNumOrders = 0; 
-    const uint32_t NUM_SIMULATIONS = 30;    
+    uint64_t targetBuckets = 10000; // Target used for atomic kill switch
+    const uint32_t NUM_SIMULATIONS = 10;    
     // =========================================================================
     
 
     // ==========================================================================
     // --- CHOOSE THE DISTRIBUTION FOR THE MONTE CARLO SIMULATION
     // ==========================================================================
-   
-    // MarketModel currentModel = MarketModel::GBM;
-    // MarketModel currentModel = MarketModel::MEAN_REVERSION;
     MarketModel currentModel = MarketModel::JUMP_DIFFUSION;
-    // MarketModel currentModel = MarketModel::CAUCHY;
-    // MarketModel currentModel = MarketModel::TRENDING;
+    // ==========================================================================
+    std::string modelName;
+    switch(currentModel) {
+        case MarketModel::GBM:            modelName = "GBM"; break;
+        case MarketModel::MEAN_REVERSION: modelName = "MEAN_REVERSION"; break;
+        case MarketModel::JUMP_DIFFUSION: modelName = "JUMP_DIFFUSION"; break;
+        case MarketModel::CAUCHY:         modelName = "CAUCHY"; break;
+        case MarketModel::TRENDING:       modelName = "TRENDING"; break;
+    }
     // ==========================================================================
 
 
@@ -166,7 +171,8 @@ int main() {
             std::vector<StateVector> memoryBuffer;
             memoryBuffer.reserve(10000); 
             
-            while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
+
+            while (true) {
                 if (tradeBuffer.pop(t)) {
                     tradeCount++;
                     
@@ -255,6 +261,8 @@ int main() {
         uint64_t finalBuckets = totalTradesLogged.load();
         uint64_t finalRawTrades = totalRawTrades.load();
 
+        targetBuckets = finalBuckets;
+
         std::cout << "\n--- BINARY REPLAY COMPLETE ---" << std::endl;
         std::cout << "Total Realities:           1 (The Real World)" << std::endl;
         std::cout << "Total Orders Injected:     " << dynamicNumOrders << std::endl; // SHOW THE EXACT COUNT
@@ -271,22 +279,11 @@ int main() {
         // =========================================================================
         // 2. MONTE CARLO MODE (Mathematical Multi-Path Engine)
         // =========================================================================
-        std::string modelName;
-        switch(currentModel) {
-            case MarketModel::GBM:            modelName = "GBM"; break;
-            case MarketModel::MEAN_REVERSION: modelName = "MEAN_REVERSION"; break;
-            case MarketModel::JUMP_DIFFUSION: modelName = "JUMP_DIFFUSION"; break;
-            case MarketModel::CAUCHY:         modelName = "CAUCHY"; break;
-            case MarketModel::TRENDING:       modelName = "TRENDING"; break;
-        }
-        
-        // If we didn't run historical, set a default fallback length
-        uint64_t ordersToGenerate = (dynamicNumOrders > 0) ? static_cast<uint64_t>(dynamicNumOrders * 2.0) : 10000000;
 
         std::cout << "=======================================" << std::endl;
         std::cout << "--- STARTING MONTE CARLO SIMULATION ---" << std::endl;
         std::cout << "Model: " << modelName << " | Paths: " << NUM_SIMULATIONS << std::endl;
-        std::cout << "Orders per Path: " << ordersToGenerate << " (Automatically Matched)" << std::endl;
+        std::cout << "Target Length: " << targetBuckets << " Buckets" << std::endl;
         std::cout << "=======================================\n" << std::endl;
 
         std::atomic<uint64_t> totalTradesGlobal{0};
@@ -306,6 +303,7 @@ int main() {
             std::atomic<bool> consumerDone{false};
             std::atomic<uint64_t> totalTradesSim{0};
             std::atomic<uint64_t> totalRawTradesSim{0};
+            std::atomic<bool> isRunningMC{true};
 
             // Start exactly where the historical data started!
             Price startPrice = globalFirstPrice.load() > 0 ? globalFirstPrice.load() : 
@@ -313,8 +311,7 @@ int main() {
 
             std::thread producer([&]() {
                 pinThread(0); 
-                // Uses the automatically matched order count!
-                MonteCarloSimulator::generateFlow(eventBuffer, ordersToGenerate, 30, currentModel, startPrice, dna.drift, dna.volatility);
+                MonteCarloSimulator::generateFlow(eventBuffer, isRunningMC, 30, currentModel, startPrice, dna.drift, dna.volatility);
                 producerDone.store(true, std::memory_order_release);
             });
 
@@ -344,7 +341,8 @@ int main() {
                 std::vector<StateVector> memoryBuffer;
                 memoryBuffer.reserve(10000); 
                 
-                while (!consumerDone.load(std::memory_order_acquire) || tradeCount > 0) {
+
+                while (true) {
                     if (tradeBuffer.pop(t)) {
                         tradeCount++;
                         
@@ -354,6 +352,10 @@ int main() {
                             currentBucket.bucketId = ++bucketCounter;
                             currentBucket.openPrice = t.price;
                             currentBucket.lowPrice = t.price;
+
+                            if (bucketCounter >= targetBuckets) {
+                                isRunningMC.store(false, std::memory_order_relaxed);
+                            }
                         }
                         
                         if (t.price > currentBucket.highPrice) currentBucket.highPrice = t.price;
@@ -414,9 +416,9 @@ int main() {
     }
 
     std::ofstream meta("output/metadata.txt");
-    if (RUN_HISTORICAL && RUN_MONTE_CARLO) meta << "HYBRID_INFLUENCED\n" << binFilename;
+    if (RUN_HISTORICAL && RUN_MONTE_CARLO) meta << modelName << "\n" << binFilename;
     else if (RUN_HISTORICAL) meta << "HISTORICAL\n" << binFilename;
-    else meta << "MONTE_CARLO\n" << "PURE_MATH";
+    else meta << modelName << "\n" << "PURE_MATH";
     meta.close();
 
     // =========================================================================

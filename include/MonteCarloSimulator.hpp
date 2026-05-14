@@ -2,6 +2,7 @@
 #pragma once
 #include <random>
 #include <cmath>
+#include <atomic>
 #include "Types.hpp"
 #include "RingBuffer.hpp"
 
@@ -17,7 +18,7 @@ class MonteCarloSimulator {
 public:
     template <size_t S>
     static void generateFlow(RingBuffer<MarketEvent, S>& buffer, 
-                             uint32_t numOrders, 
+                             std::atomic<bool>& isRunning, 
                              uint32_t cancelPercent, 
                              MarketModel model, 
                              Price startPrice,
@@ -35,7 +36,7 @@ public:
         double currentPrice = static_cast<double>(startPrice);
         uint64_t orderCounter = 1;
 
-        for (uint32_t i = 0; i < numOrders; ++i) {
+        while (isRunning.load(std::memory_order_relaxed)) {
             
             // Usamos el ADN inyectado en lugar de valores fijos
             double drift = avgDrift;
@@ -62,7 +63,7 @@ public:
 
             if (cancelDist(rng) <= cancelPercent && orderCounter > 100) {
                 uint64_t cancelId = orderCounter - (cancelDist(rng) % 50); 
-                while (!buffer.push(MarketEvent::cancel(cancelId))) {
+                while (isRunning.load(std::memory_order_relaxed) && !buffer.push(MarketEvent::cancel(cancelId))) {
                     __builtin_ia32_pause();
                 }
             } else {
@@ -70,7 +71,7 @@ public:
                 Quantity qty = 10 + (cancelDist(rng) % 50); 
                 
                 Order newOrd(orderCounter++, tickPrice, qty, side);
-                while (!buffer.push(MarketEvent::newOrder(newOrd))) {
+                while (isRunning.load(std::memory_order_relaxed) && !buffer.push(MarketEvent::newOrder(newOrd))) {
                     __builtin_ia32_pause();
                 }
             }

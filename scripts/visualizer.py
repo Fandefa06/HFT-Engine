@@ -115,6 +115,7 @@ for sim_id in unique_sims:
 ax_price.set_title(f'Price Action: Reality vs {CURRENT_MODEL_NAME} Probability Cloud', fontsize=16)
 ax_lower.set_title('AI Signal: Normalized Cumulative OFI [-1 to 1] (Shape Comparison)')
 ax_lower.set_ylabel('Normalized Score')
+ax_price.set_xlim(0, hist_len)
 ax_price.legend(loc='upper left')
 
 mc_mean_end = np.mean(mc_final_prices) if len(mc_final_prices) > 0 else 0
