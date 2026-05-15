@@ -54,13 +54,14 @@ int main() {
     // =========================================================================
     // --- BINARY FILE TO OBTAIN THE DATA ---
     // =========================================================================
-    std::string binFilename = "data/ETHUSDT-trades-2023-11.bin";
+    std::string binFilename = "data/BTCUSDT-trades-2026-01.bin";
     // =========================================================================
 
 
     // ========================================================================
     // --- CHANGE THE POLICY OF THE DATA TO ANALYZE HERE ---
-    OrderBook<ETH_Policy> myBook;
+    using ActivePolicy = BTC_Policy; // <--- CENTRALIZED POLICY SWITCH
+    OrderBook<ActivePolicy> myBook;
     // ========================================================================
 
 
@@ -307,11 +308,12 @@ int main() {
 
             // Start exactly where the historical data started!
             Price startPrice = globalFirstPrice.load() > 0 ? globalFirstPrice.load() : 
-                               ETH_Policy::minPriceTicks + ((ETH_Policy::maxPriceTicks - ETH_Policy::minPriceTicks) / 2);
+                               ActivePolicy::minPriceTicks + ((ActivePolicy::maxPriceTicks - ActivePolicy::minPriceTicks) / 2);
 
             std::thread producer([&]() {
                 pinThread(0); 
-                MonteCarloSimulator::generateFlow(eventBuffer, isRunningMC, 30, currentModel, startPrice, dna.drift, dna.volatility);
+                // Passed the ActivePolicy template here!
+                MonteCarloSimulator::generateFlow<ActivePolicy>(eventBuffer, isRunningMC, 30, currentModel, startPrice, dna.drift, dna.volatility);
                 producerDone.store(true, std::memory_order_release);
             });
 

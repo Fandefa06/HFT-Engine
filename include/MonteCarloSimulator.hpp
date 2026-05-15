@@ -17,7 +17,7 @@ enum class MarketModel {
 
 class MonteCarloSimulator {
 public:
-    template <size_t S>
+    template <typename Policy, size_t S> 
     static void generateFlow(RingBuffer<MarketEvent, S>& buffer, 
                              std::atomic<bool>& isRunning, 
                              uint32_t cancelPercent, 
@@ -28,8 +28,6 @@ public:
         
         thread_local std::mt19937_64 rng(std::random_device{}());
         std::uniform_int_distribution<uint32_t> cancelDist(1, 100);
-        
-        // 50/50 perfecto para mantener el flujo de liquidez del OrderBook intacto
         std::uniform_int_distribution<uint32_t> sideDist(0, 1); 
         
         std::uniform_real_distribution<double> jumpChance(0.0, 1.0); 
@@ -40,13 +38,12 @@ public:
         uint64_t orderCounter = 1;
 
         // --- DECODIFICACIÓN GEOMÉTRICA EXACTA ---
-        // Recuperamos los porcentajes puros
         double trueDriftPerBucket = avgDrift / 100.0; 
         double trueVolPerBucket = stdDev / 5000.0;
         
-        // Escalado por orden (aprox 2000 órdenes reales = 1 bucket de 1000 trades)
-        double driftPerOrder = trueDriftPerBucket / 2000.0;
-        double volPerOrder = trueVolPerBucket / std::sqrt(2000.0);
+        // El ratio empírico exacto de tu motor: 1042 órdenes = 1 Bucket
+        double driftPerOrder = trueDriftPerBucket / 1042.0;
+        double volPerOrder = trueVolPerBucket / std::sqrt(1042.0);
 
         while (isRunning.load(std::memory_order_relaxed)) {
             
@@ -62,23 +59,22 @@ public:
             } else if (model == MarketModel::JUMP_DIFFUSION) {
                 pctChange = driftPerOrder + (volPerOrder * noise(rng));
                 
-                // EL BUG ESTABA AQUÍ: 0.0001 generaba demasiados saltos y el precio se hundía.
-                // Ajustado a 0.000002 (~60 saltos por simulación, perfecto para el crash de Enero 2022).
-                if (jumpChance(rng) < 0.000002) { 
-                    double jumpPct = std::abs(noise(rng)) * trueVolPerBucket * 3.0; 
-                    pctChange += (driftPerOrder < 0) ? -jumpPct : jumpPct; 
+                // BUG FIX: Saltos Simétricos Orgánicos. 
+                // Al usar directamente noise(rng), el salto puede ser positivo (Rally) o negativo (Crash).
+                // Probabilidad ajustada para ~60 eventos cisne negro por cada 124M de órdenes.
+                if (jumpChance(rng) < 0.0000005) { 
+                    double jumpPct = noise(rng) * trueVolPerBucket * 5.0; 
+                    pctChange += jumpPct; 
                 }
             } else if (model == MarketModel::CAUCHY) {
                 pctChange = driftPerOrder + (volPerOrder * cauchyNoise(rng) * 0.1); 
             }
 
-            // Aplicar el cambio geométrico
             currentPrice += currentPrice * pctChange;
 
-            // EL SEGUNDO BUG (EL CUELGUE): Límite de seguridad estricto.
-            // Garantiza que el precio nunca baje de tu ETH_Policy::minPriceTicks (100.000)
-            // ni supere el maxPriceTicks (1.000.000), salvando al OrderBook de congelarse.
-            currentPrice = std::clamp(currentPrice, 105000.0, 950000.0);
+            double safeMin = static_cast<double>(Policy::minPriceTicks) * 1.01; 
+            double safeMax = static_cast<double>(Policy::maxPriceTicks) * 0.99; 
+            currentPrice = std::clamp(currentPrice, safeMin, safeMax);
             
             Price tickPrice = static_cast<Price>(std::round(currentPrice));
 
