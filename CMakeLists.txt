@@ -25,3 +25,8 @@ add_executable(MotorHFT
 # 7. REQUIRED FOR HFT: Link the hardware threading libraries
 find_package(Threads REQUIRED)
 target_link_libraries(MotorHFT Threads::Threads)
+
+# Si la carpeta privada existe, la incluimos en el compilador
+if(EXISTS "${CMAKE_SOURCE_DIR}/mis_bots")
+    include_directories(${CMAKE_SOURCE_DIR}/mis_bots)
+endif()

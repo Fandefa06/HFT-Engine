@@ -24,6 +24,15 @@
 #include "HistoricalParser.hpp"
 #include "BinaryParser.hpp"
 #include "AssetPolicies.hpp"
+#include "BotBase.hpp"
+
+#if __has_include("MyStrategy.hpp")
+    #include "MyStrategy.hpp"
+    using ActiveBot = MyStrategy;
+#else
+    #include "TemplateBot.hpp"
+    using ActiveBot = TemplateBot;
+#endif
 
 // --- FORMATTING UTILITY ---
 // Converts raw seconds into a precise Days, Hours, Minutes, and Seconds format
@@ -81,7 +90,7 @@ int main() {
     // =========================================================================
     // --- BINARY FILE TO OBTAIN THE DATA ---
     // =========================================================================
-    std::string binFilename = "data/ETH_FULL_2024.bin";
+    std::string binFilename = "data/ETHUSDT-trades-2022-01.bin";
     // =========================================================================
 
 

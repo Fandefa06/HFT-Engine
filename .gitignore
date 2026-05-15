@@ -14,6 +14,9 @@ precompiler
 # We never push multi-gigabyte simulation data to GitHub
 output/
 
+# --- I am not disclosing my personal strategies ---
+trading-algorithms
+
 # --- Analysis & Privacy ---
 # We ignore the logic (.Rmd) and temporary files to keep the repo 100% C++
 # and protect your analytical secret sauce.
