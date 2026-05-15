@@ -1,8 +1,8 @@
 // main.cpp
 
-// ====================================================================
-// --- VERY IMPORTANT: NOTHING FOR NOW
-// ====================================================================
+// ===============================================================================================================
+// --- VERY IMPORTANT: FIX LAST IDEA ON CONNECTING THE BOT TO THE ENGINE, IT IS EXPLAINED IN LAST PROMPT IN GEMINI
+// ===============================================================================================================
 
 #include <iostream>
 #include <chrono>
@@ -199,6 +199,9 @@ int main() {
             pinThread(4); 
             std::ofstream file("/dev/shm/features_binary.dat", std::ios::binary | std::ios::app);
             
+            // <--- NEW: Initialize the trading bot for the Historical reality
+            ActiveBot myHistoricalBot; 
+
             Trade t;
             uint64_t tradeCount = 0;
             uint64_t bucketCounter = 0;
@@ -241,6 +244,9 @@ int main() {
                         memoryBuffer.push_back(currentBucket);
                         realPricesForDNA.push_back(static_cast<double>(currentBucket.closePrice));
 
+                        // <--- NEW: Feed the freshly closed bucket to our bot
+                        myHistoricalBot.evaluateMarket(currentBucket);
+
                         if (memoryBuffer.size() >= 1000) {
                             if (SAVE_FEATURES) { // <--- CHECK THE SWITCH BEFORE WRITING
                                 file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
@@ -257,11 +263,18 @@ int main() {
             if (tradeCount % TRADES_PER_BUCKET != 0 && tradeCount > 0) {
                 memoryBuffer.push_back(currentBucket);
                 realPricesForDNA.push_back(static_cast<double>(currentBucket.closePrice));
+                
+                // <--- NEW: Feed the remaining incomplete bucket to our bot just in case
+                myHistoricalBot.evaluateMarket(currentBucket);
             }
             if (SAVE_FEATURES && !memoryBuffer.empty()) { // <--- ADD CHECK HERE
                 file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
             }
             
+            // <--- NEW: Print the results of the bot operating on Real Historical Data
+            std::cout << "\n[=== REAL HISTORICAL DATA BOT PERFORMANCE ===]" << std::endl;
+            myHistoricalBot.printReport();
+
             totalTradesLogged.store(bucketCounter, std::memory_order_release);
             totalRawTrades.store(tradeCount, std::memory_order_release);
             file.close();
@@ -375,6 +388,9 @@ int main() {
             std::thread logger([&]() {
                 pinThread(4); 
                 
+                // <--- NEW: Initialize a FRESH bot for this specific parallel universe
+                ActiveBot myMonteCarloBot;
+
                 Trade t;
                 uint64_t tradeCount = 0;
                 uint64_t bucketCounter = 0;
@@ -414,6 +430,10 @@ int main() {
 
                         if (tradeCount % TRADES_PER_BUCKET == 0) {
                             memoryBuffer.push_back(currentBucket);
+
+                            // <--- NEW: Feed the freshly closed bucket to the Monte Carlo bot
+                            myMonteCarloBot.evaluateMarket(currentBucket);
+
                             if (memoryBuffer.size() >= 1000) {
                                 if (SAVE_FEATURES) { // <--- CHECK THE SWITCH BEFORE WRITING
                                     file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
@@ -429,10 +449,14 @@ int main() {
                 
                 if (tradeCount % TRADES_PER_BUCKET != 0 && tradeCount > 0) {
                     memoryBuffer.push_back(currentBucket);
+
+                    // <--- NEW: Feed remaining bucket
+                    myMonteCarloBot.evaluateMarket(currentBucket);
                 }
                 if (SAVE_FEATURES && !memoryBuffer.empty()) { // <--- ADD CHECK HERE
                     file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
                 }
+
                 
                 totalTradesSim.store(bucketCounter, std::memory_order_release);
                 totalRawTradesSim.store(tradeCount, std::memory_order_release);

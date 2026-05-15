@@ -27,6 +27,6 @@ find_package(Threads REQUIRED)
 target_link_libraries(MotorHFT Threads::Threads)
 
 # Si la carpeta privada existe, la incluimos en el compilador
-if(EXISTS "${CMAKE_SOURCE_DIR}/mis_bots")
-    include_directories(${CMAKE_SOURCE_DIR}/mis_bots)
+if(EXISTS "${CMAKE_SOURCE_DIR}/trading-algorithms/include")
+    include_directories(${CMAKE_SOURCE_DIR}/trading-algorithms/include)
 endif()

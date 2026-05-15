@@ -5,7 +5,7 @@
 class TemplateBot : public BotBase {
 public:
     TemplateBot() {
-        std::cout << "[SYSTEM] Using Public Template Bot (No Alpha)" << std::endl;
+        //std::cout << "[SYSTEM] Using Public Template Bot (No Alpha)" << std::endl;
     }
 
     void evaluateMarket(const StateVector& bucket) override {
