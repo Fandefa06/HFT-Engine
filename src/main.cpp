@@ -15,6 +15,8 @@
 #include <numeric>
 #include <cmath>
 #include <algorithm>
+#include <iomanip>  // <--- ADDED FOR PRECISION FORMATTING
+#include <sstream>  // <--- ADDED FOR STRING STREAMING
 #include "OrderBook.hpp"
 #include "MarketSimulator.hpp"
 #include "MonteCarloSimulator.hpp"
@@ -22,6 +24,30 @@
 #include "HistoricalParser.hpp"
 #include "BinaryParser.hpp"
 #include "AssetPolicies.hpp"
+
+// --- FORMATTING UTILITY ---
+// Converts raw seconds into a precise Days, Hours, Minutes, and Seconds format
+std::string formatElapsedTime(double total_seconds) {
+    uint64_t t = static_cast<uint64_t>(total_seconds);
+    double fractional = total_seconds - t;
+
+    uint64_t days = t / 86400;
+    t %= 86400;
+    uint64_t hours = t / 3600;
+    t %= 3600;
+    uint64_t minutes = t / 60;
+    t %= 60; // <--- THE BUG FIX: Extract remaining seconds properly
+    double seconds = t + fractional;
+
+    std::ostringstream oss;
+    if (days > 0) oss << days << " days, ";
+    if (days > 0 || hours > 0) oss << hours << " hours, ";
+    if (days > 0 || hours > 0 || minutes > 0) oss << minutes << " minutes, ";
+    oss << std::fixed << std::setprecision(4) << seconds << " seconds";
+    
+    return oss.str();
+}
+// ------------------------------
 
 // Structure to hold the statistical "DNA" of a historical period
 struct MarketDNA {
@@ -48,19 +74,20 @@ int main() {
     // =========================================================================
     bool RUN_HISTORICAL = true;
     bool RUN_MONTE_CARLO = true; 
+    bool SAVE_FEATURES = true;
     // =========================================================================
 
 
     // =========================================================================
     // --- BINARY FILE TO OBTAIN THE DATA ---
     // =========================================================================
-    std::string binFilename = "data/BTCUSDT-trades-2026-01.bin";
+    std::string binFilename = "data/ETH_FULL_2024.bin";
     // =========================================================================
 
 
     // ========================================================================
     // --- CHANGE THE POLICY OF THE DATA TO ANALYZE HERE ---
-    using ActivePolicy = BTC_Policy; // <--- CENTRALIZED POLICY SWITCH
+    using ActivePolicy = ETH_Policy; 
     OrderBook<ActivePolicy> myBook;
     // ========================================================================
 
@@ -72,7 +99,7 @@ int main() {
     // DYNAMIC MATCHING: We start at 0 and auto-detect the size of the history!
     uint64_t dynamicNumOrders = 0; 
     uint64_t targetBuckets = 10000; // Target used for atomic kill switch
-    const uint32_t NUM_SIMULATIONS = 10;    
+    const uint32_t NUM_SIMULATIONS = 3;    
     // =========================================================================
     
 
@@ -206,8 +233,10 @@ int main() {
                         realPricesForDNA.push_back(static_cast<double>(currentBucket.closePrice));
 
                         if (memoryBuffer.size() >= 1000) {
-                            file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
-                            memoryBuffer.clear();
+                            if (SAVE_FEATURES) { // <--- CHECK THE SWITCH BEFORE WRITING
+                                file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
+                            }
+                            memoryBuffer.clear(); // Always clear memory to avoid RAM explosion
                         }
                     }
                 } else {
@@ -220,7 +249,7 @@ int main() {
                 memoryBuffer.push_back(currentBucket);
                 realPricesForDNA.push_back(static_cast<double>(currentBucket.closePrice));
             }
-            if (!memoryBuffer.empty()) {
+            if (SAVE_FEATURES && !memoryBuffer.empty()) { // <--- ADD CHECK HERE
                 file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
             }
             
@@ -268,7 +297,10 @@ int main() {
         std::cout << "Total Realities:           1 (The Real World)" << std::endl;
         std::cout << "Total Orders Injected:     " << dynamicNumOrders << std::endl; // SHOW THE EXACT COUNT
         std::cout << "Total Feature Buckets:     " << finalBuckets << std::endl;
-        std::cout << "Elapsed time:              " << elapsed.count() << " seconds" << std::endl;
+        
+        // --- USING THE NEW PRECISE TIME FORMATTER ---
+        std::cout << "Elapsed time:              " << formatElapsedTime(elapsed.count()) << std::endl;
+
         std::cout << "Average Throughput:        " << (finalRawTrades / elapsed.count()) << " trades/sec" << std::endl;
         std::cout << "Extracted Drift:           " << dna.drift << std::endl;
         std::cout << "Extracted Volatility:      " << dna.volatility << std::endl;
@@ -374,8 +406,10 @@ int main() {
                         if (tradeCount % TRADES_PER_BUCKET == 0) {
                             memoryBuffer.push_back(currentBucket);
                             if (memoryBuffer.size() >= 1000) {
-                                file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
-                                memoryBuffer.clear();
+                                if (SAVE_FEATURES) { // <--- CHECK THE SWITCH BEFORE WRITING
+                                    file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
+                                }
+                                memoryBuffer.clear(); // Always clear memory to avoid RAM explosion
                             }
                         }
                     } else {
@@ -387,7 +421,7 @@ int main() {
                 if (tradeCount % TRADES_PER_BUCKET != 0 && tradeCount > 0) {
                     memoryBuffer.push_back(currentBucket);
                 }
-                if (!memoryBuffer.empty()) {
+                if (SAVE_FEATURES && !memoryBuffer.empty()) { // <--- ADD CHECK HERE
                     file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
                 }
                 
@@ -411,7 +445,11 @@ int main() {
         std::cout << "Model Simulated:           " << modelName << std::endl;
         std::cout << "Total Realities Simulated: " << NUM_SIMULATIONS << std::endl;
         std::cout << "Total Feature Buckets:     " << totalTradesGlobal.load() << std::endl;
-        std::cout << "Elapsed time:              " << elapsedMC.count() << " seconds" << std::endl;
+        
+        // --- USING THE NEW PRECISE TIME FORMATTER & ADDING AVG TIME ---
+        std::cout << "Elapsed time:              " << formatElapsedTime(elapsedMC.count()) << std::endl;
+        std::cout << "Avg time per simulation:   " << formatElapsedTime(elapsedMC.count() / NUM_SIMULATIONS) << std::endl;
+
         std::cout << "Average Throughput:        " << (totalRawTradesGlobal.load() / elapsedMC.count()) << " trades/sec" << std::endl;
         std::cout << "Metadata saved:            " << modelName << " -> output/metadata.txt" << std::endl;
         std::cout << "---------------------------------------" << std::endl;

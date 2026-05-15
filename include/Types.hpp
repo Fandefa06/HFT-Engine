@@ -52,7 +52,7 @@ struct MarketEvent {
 // =========================================================================
 struct StateVector {
     uint32_t simId;
-    uint32_t padding;         // <--- CRITICAL FIX: Memory alignment for Python
+    uint32_t padding;        
     uint64_t bucketId;        
     int64_t openPrice;
     int64_t highPrice;
