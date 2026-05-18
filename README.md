@@ -67,17 +67,54 @@ The engine is capable of generating massive datasets (e.g., **multi-gigabyte `.d
 You can customize the simulation mode directly via the Master Toggle in `src/main.cpp`:
 
 ```cpp
-// =========================================================================
-// --- MASTER TOGGLE: HISTORICAL (BINARY) VS MONTE CARLO ---
-// =========================================================================
-// Set to 'true' to replay real Binance binary data (1 timeline).
-// Set to 'false' to run mathematical Monte Carlo universes (1000 timelines).
-bool RUN_HISTORICAL = true; 
-// =========================================================================
+    // =========================================================================
+    // --- MASTER TOGGLE: HISTORICAL (BINARY) VS MONTE CARLO ---
+    // =========================================================================
+    bool RUN_HISTORICAL = true;
+    bool RUN_MONTE_CARLO = true; 
+    bool SAVE_FEATURES = true;
+    // =========================================================================
 
-// If Monte Carlo is selected:
-const uint32_t numOrdersPerSim = 1000000;   
-MarketModel currentModel = MarketModel::GBM;
+
+    // =========================================================================
+    // --- BINARY FILE TO OBTAIN THE DATA ---
+    // =========================================================================
+    std::string binFilename = "data/ETHUSDT-trades-2022-11.bin";
+    // =========================================================================
+
+
+    // ========================================================================
+    // --- CHANGE THE POLICY OF THE DATA TO ANALYZE HERE ---
+    using ActivePolicy = ETH_Policy; 
+    OrderBook<ActivePolicy> myBook;
+    // ========================================================================
+
+
+
+    // =========================================================================
+    // --- MONTE CARLO PARAMETERS ---
+    // =========================================================================
+    // DYNAMIC MATCHING: We start at 0 and auto-detect the size of the history!
+    uint64_t dynamicNumOrders = 0; 
+    uint64_t targetBuckets = 10000; // Target used for atomic kill switch
+    const uint32_t NUM_SIMULATIONS = 5;    
+    // =========================================================================
+    
+
+    // ==========================================================================
+    // --- CHOOSE THE DISTRIBUTION FOR THE MONTE CARLO SIMULATION
+    // ==========================================================================
+    MarketModel currentModel = MarketModel::JUMP_DIFFUSION;
+    // ==========================================================================
+    std::string modelName;
+    switch(currentModel) {
+        case MarketModel::GBM:            modelName = "GBM"; break;
+        case MarketModel::MEAN_REVERSION: modelName = "MEAN_REVERSION"; break;
+        case MarketModel::JUMP_DIFFUSION: modelName = "JUMP_DIFFUSION"; break;
+        case MarketModel::CAUCHY:         modelName = "CAUCHY"; break;
+        case MarketModel::TRENDING:       modelName = "TRENDING"; break;
+    }
+    // ==========================================================================
 ```
 ## 🗺️ Roadmap & Future Work (Active Development)
 
