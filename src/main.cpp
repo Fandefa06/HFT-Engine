@@ -3,7 +3,11 @@
 // ===============================================================================================================
 // --- VERY IMPORTANT: FIX LAST IDEA ON CONNECTING THE BOT TO THE ENGINE, IT IS EXPLAINED IN LAST PROMPT IN GEMINI
 // ===============================================================================================================
-//holahhhh
+
+// ================================================================================
+// --- FULLY DEVELOPED BY PEDRO ANTONIO PÉREZ FERNÁNDEZ ---
+// --- IT IS SUBJECT TO BUGS AND ERRORS, ANYTHING RELATED TO THEM PLEASE REPORT ---
+// ================================================================================
 
 #include <iostream>
 #include <chrono>
