@@ -114,7 +114,12 @@ You can customize the simulation mode directly via the Master Toggle in `src/mai
         case MarketModel::CAUCHY:         modelName = "CAUCHY"; break;
         case MarketModel::TRENDING:       modelName = "TRENDING"; break;
     }
+
     // ==========================================================================
+    // Execution command (WSL && Linux)
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j $(nproc) && ./build/MotorHFT
+    //==========================================================================
+
 ```
 ## 🗺️ Roadmap & Future Work (Active Development)
 
