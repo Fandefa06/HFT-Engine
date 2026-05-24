@@ -1,9 +1,9 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import os
-import time
+import subprocess
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-# --- CONFIGURATION & DETECTION ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 meta_path = os.path.normpath(os.path.join(script_dir, "..", "output", "metadata.txt"))
 
@@ -12,17 +12,13 @@ if os.path.exists(meta_path):
         lines = f.readlines()
         CURRENT_MODEL_NAME = lines[0].strip() if len(lines) > 0 else "UNKNOWN"
         FILE_TAG = os.path.basename(lines[1].strip()).replace('.bin', '') if len(lines) > 1 else "DATA"
-    print(f"Auto-detected Market Model: {CURRENT_MODEL_NAME} | Source: {FILE_TAG}")
 else:
     CURRENT_MODEL_NAME = "UNKNOWN"
     FILE_TAG = "UNKNOWN"
 
-is_historical = (CURRENT_MODEL_NAME == "HISTORICAL")
-
-# --- THE AI STATE VECTOR LAYOUT (64 Bytes) ---
 feature_dtype = np.dtype([
     ('simId', np.uint32),
-    ('padding', np.uint32), # REQUIRED TO ALIGN WITH C++
+    ('padding', np.uint32),
     ('bucketId', np.uint64),
     ('openPrice', np.int64),
     ('highPrice', np.int64),
@@ -34,133 +30,209 @@ feature_dtype = np.dtype([
 
 file_path = "/dev/shm/features_binary.dat"
 if not os.path.exists(file_path):
-    print(f"Error: RAM-disk file not found.")
+    print("Error: RAM-disk file not found.")
     exit()
 
-file_size_mb = os.path.getsize(file_path) / (1024**2)
-start_time = time.time()
+bot_trades_path = os.path.join(script_dir, "..", "output", "bot_trades.csv")
+bot_actions = []
+if os.path.exists(bot_trades_path):
+    with open(bot_trades_path, 'r') as f:
+        for line in f:
+            parts = line.strip().split(',')
+            if len(parts) == 4:
+                bot_actions.append({
+                    'simId': int(parts[0]),
+                    'bucketId': int(parts[1]),
+                    'action': parts[2],
+                    'price': float(parts[3]) / 100.0
+                })
 
-# Load everything from RAM instantly
 features = np.fromfile(file_path, dtype=feature_dtype)
-total_buckets = len(features)
 unique_sims = np.unique(features['simId'])
-print(f"Successfully loaded {total_buckets:,} State Vectors from RAM ({file_size_mb:.2f} MB).")
-print(f"Detected {len(unique_sims)} Unique Timelines.")
-
-# 3. DASHBOARD INITIALIZATION
-fig = plt.figure(figsize=(24, 14)) # Slightly wider for the larger text box
-gs = fig.add_gridspec(2, 2, width_ratios=[4, 1.2], height_ratios=[2.5, 1.2])
-fig.suptitle(f'MotorHFT Analytics | Model: {CURRENT_MODEL_NAME} | Asset: {FILE_TAG}', fontsize=24, fontweight='bold')
-
-ax_price = fig.add_subplot(gs[0, 0])
-ax_hist = fig.add_subplot(gs[0, 1], sharey=ax_price)
-ax_lower = fig.add_subplot(gs[1, 0], sharex=ax_price)
-ax_metrics = fig.add_subplot(gs[1, 1])
-ax_metrics.axis('off')
-
-# =========================================================================
-# DATA PRE-PROCESSING & METRICS EXTRACTION
-# =========================================================================
 
 hist_mask = features['simId'] == 0
-hist_data = features[hist_mask]
-hist_len = len(hist_data)
+hist_len = len(features[hist_mask]) if len(features[hist_mask]) > 0 else 0
 
-hist_end_price = hist_data['closePrice'][-1] if hist_len > 0 else 0
-hist_max = hist_data['highPrice'].max() if hist_len > 0 else 0
-hist_min = hist_data['lowPrice'].min() if hist_len > 0 else 0
-
-mc_mask = features['simId'] > 0
-mc_data = features[mc_mask]
-mc_count = len(np.unique(mc_data['simId'])) if len(mc_data) > 0 else 0
-mc_max = mc_data['highPrice'].max() if mc_count > 0 else 0
-mc_min = mc_data['lowPrice'].min() if mc_count > 0 else 0
-
-# =========================================================================
-# PLOTTING LOGIC: HYBRID (REALITY VS CLOUD)
-# =========================================================================
-
-mc_final_prices = []
-print(f"Plotting {min(101, len(unique_sims))} simulation paths...")
-
-for sim_id in unique_sims:
-    sim_data = features[features['simId'] == sim_id]
-    if len(sim_data) == 0: continue
-        
-    sim_prices = sim_data['closePrice']
-    raw_ofi = np.cumsum(sim_data['orderFlowImbalance'])
-    
-    # NORMALIZATION: This scales OFI between -1 and 1 so shapes can be compared 
-    # regardless of whether the volume was 10 or 10,000,000
-    max_ofi = np.max(np.abs(raw_ofi))
-    norm_ofi = raw_ofi / max_ofi if max_ofi != 0 else raw_ofi
-
-    if sim_id == 0:
-        # THE REAL WORLD (Bold Blue)
-        ax_price.plot(sim_prices, color='midnightblue', linewidth=3, zorder=10, label='Reality (Historical)')
-        ax_lower.plot(norm_ofi, color='midnightblue', linewidth=2, zorder=10)
-    else:
-        # SIMULATIONS (Faded Orange Cloud)
-        if sim_id <= 100:
-            # Truncate MC data to match history length exactly
-            plot_prices = sim_prices[:hist_len] if hist_len > 0 else sim_prices
-            plot_ofi = norm_ofi[:hist_len] if hist_len > 0 else norm_ofi
-            
-            if len(plot_prices) > 0:
-                mc_final_prices.append(plot_prices[-1])
-                
-            ax_price.plot(plot_prices, color='darkorange', linewidth=0.8, alpha=0.15)
-            ax_lower.plot(plot_ofi, color='darkorange', linewidth=0.8, alpha=0.15)
-
-ax_price.set_title(f'Price Action: Reality vs {CURRENT_MODEL_NAME} Probability Cloud', fontsize=16)
-ax_lower.set_title('AI Signal: Normalized Cumulative OFI [-1 to 1] (Shape Comparison)')
-ax_lower.set_ylabel('Normalized Score')
-ax_price.set_xlim(0, hist_len)
-ax_price.legend(loc='upper left')
-
-mc_mean_end = np.mean(mc_final_prices) if len(mc_final_prices) > 0 else 0
-
-# =========================================================================
-
-ax_price.set_ylabel('Price (Ticks)')
-ax_price.grid(True, alpha=0.3)
-
-# Histogram of all prices across all realities
-prices = features['closePrice']
-ax_hist.hist(prices, bins=100, orientation='horizontal', color='darkorange', alpha=0.7)
-if hist_len > 0:
-    ax_hist.axhline(y=hist_end_price, color='midnightblue', linestyle='--', linewidth=2, label='Real Final Price')
-ax_hist.set_title('Global Price Distribution')
-ax_hist.legend()
-
-ax_lower.grid(True, alpha=0.3)
-
-# =========================================================================
-# 6. ENHANCED SUMMARY METRICS
-# =========================================================================
-metrics_text = (
-    f"--- PIPELINE REPORT ---\n\n"
-    f"Asset Source:      {FILE_TAG}\n"
-    f"RAM Payload:       {file_size_mb:.2f} MB\n"
-    f"Total Buckets:     {total_buckets:,}\n"
-    f"Timelines Plotted: {mc_count} MC + 1 Real\n\n"
-    f"--- REALITY STATS (Ticks) ---\n\n"
-    f"Historical End:    {hist_end_price:,.2f}\n"
-    f"Historical Max:    {hist_max:,.2f}\n"
-    f"Historical Min:    {hist_min:,.2f}\n\n"
-    f"--- SIMULATION STATS (Ticks) ---\n\n"
-    f"MC Mean End:       {mc_mean_end:,.2f}\n"
-    f"MC Max Observed:   {mc_max:,.2f}\n"
-    f"MC Min Observed:   {mc_min:,.2f}\n\n"
-    f"Total Latency:     {time.time() - start_time:.2f}s"
+fig = make_subplots(
+    rows=3, cols=1, 
+    shared_xaxes=True,
+    vertical_spacing=0.03,
+    row_heights=[0.55, 0.25, 0.20],
+    subplot_titles=('Market Price & Executions', 'Strategy Portfolio Value (USD)', 'Normalized Order Flow Imbalance')
 )
 
-ax_metrics.text(0.05, 0.95, metrics_text, fontsize=13, fontfamily='monospace', 
-                verticalalignment='top', bbox=dict(boxstyle='round,pad=1', facecolor='#f8f9fa', edgecolor='gray'))
+total_sims_plotted = min(len(unique_sims), 15)
+traces_per_sim = 5 
+all_profits = []
+all_drawdowns = []
+buttons = []
 
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-output_img = os.path.join(script_dir, "..", "output", f"report_{FILE_TAG}_{CURRENT_MODEL_NAME}.png")
-plt.savefig(output_img, dpi=150)
+for i, sim_id in enumerate(unique_sims):
+    if i >= total_sims_plotted: break
 
-print(f"Analysis Complete! Multi-panel report saved: {output_img}")
-os.system(f"explorer.exe $(wslpath -w '{output_img}') &")
+    sim_data = features[features['simId'] == sim_id]
+    
+    sim_prices = sim_data['closePrice'][:hist_len] / 100.0 if hist_len > 0 else sim_data['closePrice'] / 100.0
+    x_vals = np.arange(len(sim_prices))
+    
+    raw_ofi = np.cumsum(sim_data['orderFlowImbalance'])
+    max_ofi_val = np.max(np.abs(raw_ofi))
+    norm_ofi = raw_ofi / max_ofi_val if max_ofi_val != 0 else raw_ofi
+    plot_ofi = norm_ofi[:hist_len] if hist_len > 0 else norm_ofi
+
+    sim_trades = [t for t in bot_actions if t['simId'] == sim_id]
+    buy_x, buy_y, sell_x, sell_y = [], [], [], []
+    usd_balance = 10000.0
+    asset_position = 0.0
+    pnl_x, pnl_y = [0], [10000.0]
+
+    for t in sim_trades:
+        idx = t['bucketId'] - 1
+        if idx < hist_len:
+            if t['action'] == 'BUY':
+                buy_x.append(idx)
+                buy_y.append(t['price'])
+                usd_balance -= t['price']
+                asset_position += 1.0
+            else:
+                sell_x.append(idx)
+                sell_y.append(t['price'])
+                usd_balance += t['price']
+                asset_position -= 1.0
+            
+            pnl_x.append(idx)
+            pnl_y.append(usd_balance + (asset_position * t['price']))
+            
+    if len(sim_prices) > 0:
+        pnl_x.append(len(sim_prices) - 1)
+        pnl_y.append(usd_balance + (asset_position * sim_prices.iloc[-1] if hasattr(sim_prices, 'iloc') else sim_prices[-1]))
+
+    pnl_array = np.array(pnl_y)
+    net_profit_pct = ((pnl_array[-1] - 10000.0) / 10000.0) * 100.0
+    roll_max = np.maximum.accumulate(pnl_array)
+    drawdowns = (pnl_array - roll_max) / roll_max
+    max_drawdown = np.min(drawdowns) * 100.0 if len(drawdowns) > 0 else 0.0
+    total_trades = len(sim_trades)
+
+    all_profits.append(net_profit_pct)
+    all_drawdowns.append(max_drawdown)
+
+    is_real = (sim_id == 0)
+    
+    # Establish distinct visual hierarchy between Reality and Monte Carlo clouds
+    price_color = '#ffffff' if is_real else '#ff8c00'
+    price_width = 2 if is_real else 1
+    price_opacity = 1.0 if is_real else 0.3
+    
+    pnl_color = '#00bfff' if is_real else '#555555'
+    pnl_width = 2 if is_real else 1
+    pnl_opacity = 1.0 if is_real else 0.4
+    fill_type = 'tozeroy' if is_real else 'none'
+
+    # Add traces initialized for the OVERVIEW mode (Price and PnL visible, others hidden)
+    fig.add_trace(go.Scatter(x=x_vals, y=sim_prices, mode='lines', line=dict(color=price_color, width=price_width), opacity=price_opacity, name='Real Price' if is_real else f'MC Price {sim_id}', visible=True), row=1, col=1)
+    fig.add_trace(go.Scatter(x=buy_x, y=buy_y, mode='markers', marker=dict(symbol='triangle-up', color='#00ff00', size=12, line=dict(width=1, color='black')), name='BUY', visible=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=sell_x, y=sell_y, mode='markers', marker=dict(symbol='triangle-down', color='#ff3333', size=12, line=dict(width=1, color='black')), name='SELL', visible=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=pnl_x, y=pnl_y, mode='lines', line=dict(color=pnl_color, width=pnl_width), opacity=pnl_opacity, fill=fill_type, fillcolor='rgba(0, 191, 255, 0.1)', name='Real PnL' if is_real else f'MC PnL {sim_id}', visible=True), row=2, col=1)
+    fig.add_trace(go.Scatter(x=x_vals, y=plot_ofi, mode='lines', line=dict(color='#9400d3', width=2), name='OFI', visible=False), row=3, col=1)
+
+    vis_array = [False] * (total_sims_plotted * traces_per_sim)
+    for j in range(traces_per_sim):
+        vis_array[i * traces_per_sim + j] = True
+
+    sim_name = "Reality" if is_real else f"Path {sim_id}"
+    header_text = (
+        f"<b>MotorHFT Quant Terminal</b> | Asset: {FILE_TAG} | Model: {CURRENT_MODEL_NAME}<br>"
+        f"<span style='font-size: 14px; color: #00ff00;'>Net Profit: {net_profit_pct:+.2f}%</span> | "
+        f"<span style='font-size: 14px; color: #ff3333;'>Max Drawdown: {max_drawdown:.2f}%</span> | "
+        f"<span style='font-size: 14px; color: #00bfff;'>Executions: {total_trades}</span>"
+    )
+
+    buttons.append(dict(
+        label=sim_name,
+        method='update',
+        args=[{'visible': vis_array}, {'title.text': header_text}]
+    ))
+
+avg_profit = np.mean(all_profits)
+worst_dd = np.min(all_drawdowns)
+win_rate = (sum(1 for p in all_profits if p > 0) / len(all_profits)) * 100.0
+
+global_vis_array = [False] * (total_sims_plotted * traces_per_sim)
+for i in range(total_sims_plotted):
+    global_vis_array[i * traces_per_sim] = True      # Price
+    global_vis_array[i * traces_per_sim + 3] = True  # PnL
+
+global_header = (
+    f"<b>MotorHFT GLOBAL SUMMARY</b> | Evaluated Paths: {total_sims_plotted}<br>"
+    f"<span style='font-size: 14px; color: #00ff00;'>Avg Profit: {avg_profit:+.2f}%</span> | "
+    f"<span style='font-size: 14px; color: #ff3333;'>Worst Case DD: {worst_dd:.2f}%</span> | "
+    f"<span style='font-size: 14px; color: #00bfff;'>Win Rate: {win_rate:.0f}%</span>"
+)
+
+# Insert the Overview button at the top
+buttons.insert(0, dict(
+    label="OVERVIEW (All Paths)",
+    method='update',
+    args=[{'visible': global_vis_array}, {'title.text': global_header}]
+))
+
+fig.update_layout(
+    height=900, 
+    title_text=global_header, 
+    template="plotly_dark",
+    paper_bgcolor='#0a0a0a', 
+    plot_bgcolor='#0a0a0a',   
+    font=dict(color='#ffffff'),
+    hovermode="x unified",
+    margin=dict(l=40, r=20, t=110, b=20),
+    xaxis=dict(showgrid=False),
+    xaxis2=dict(showgrid=False),
+    xaxis3=dict(showgrid=False),
+    yaxis=dict(showgrid=True, gridcolor='#222222'),
+    yaxis2=dict(showgrid=True, gridcolor='#222222'),
+    yaxis3=dict(showgrid=True, gridcolor='#222222'),
+    updatemenus=[dict(
+        active=0,
+        buttons=buttons,
+        direction="down",
+        pad={"r": 10, "t": 10},
+        showactive=True,
+        x=1.0, xanchor="right",
+        y=1.12, yanchor="top",
+        bgcolor='#111111', 
+        bordercolor='#555555',
+        font=dict(color='#ffffff', size=14)
+    )]
+)
+
+output_file = os.path.join(script_dir, "..", "output", f"report_{FILE_TAG}_{CURRENT_MODEL_NAME}.html")
+
+# Generate the raw HTML string from the Plotly figure
+html_content = fig.to_html(config={'scrollZoom': True}, full_html=True)
+
+# --- CSS INJECTION: FIX PLOTLY DROPDOWN HOVER BUG ---
+# This forces the SVG elements of the menu to maintain a dark theme and highlights text in blue
+custom_css = """
+<style>
+    body { background-color: #0a0a0a !important; margin: 0px !important; }
+    
+    /* Override Plotly's default hover behaviors for the update menu */
+    .updatemenu-item rect { fill: #111111 !important; }
+    .updatemenu-item:hover rect { fill: #2a2a2a !important; }
+    .updatemenu-item text { fill: #ffffff !important; }
+    .updatemenu-item:hover text { fill: #00bfff !important; font-weight: bold !important; }
+</style>
+"""
+html_content = html_content.replace('</head>', f'{custom_css}</head>')
+
+# Save the heavily customized HTML to disk
+with open(output_file, 'w', encoding='utf-8') as f:
+    f.write(html_content)
+
+# Launch in Windows using WSL bridge
+try:
+    win_path = subprocess.check_output(['wslpath', '-w', output_file]).decode().strip()
+    subprocess.run(['explorer.exe', win_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except Exception as e:
+    pass

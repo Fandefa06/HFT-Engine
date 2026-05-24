@@ -95,12 +95,12 @@ int main() {
     // =========================================================================
     // --- BINARY FILE TO OBTAIN THE DATA ---
     // =========================================================================
-    std::string binFilename = "data/ETHUSDT-trades-2022-11.bin";
+    std::string binFilename = "data/ETH_FULL_2024.bin";
     // =========================================================================
 
 
     // ========================================================================
-    // --- CHANGE THE POLICY OF THE DATA TO ANALYZE HERE ---
+    // --- CHANGE THE POLICY OF THE DATA TO ANALYZE HERE ---    
     using ActivePolicy = ETH_Policy; 
     OrderBook<ActivePolicy> myBook;
     // ========================================================================
@@ -113,14 +113,14 @@ int main() {
     // DYNAMIC MATCHING: We start at 0 and auto-detect the size of the history!
     uint64_t dynamicNumOrders = 0; 
     uint64_t targetBuckets = 10000; // Target used for atomic kill switch
-    const uint32_t NUM_SIMULATIONS = 5;    
+    const uint32_t NUM_SIMULATIONS = 10;    
     // =========================================================================
     
 
     // ==========================================================================
     // --- CHOOSE THE DISTRIBUTION FOR THE MONTE CARLO SIMULATION
     // ==========================================================================
-    MarketModel currentModel = MarketModel::JUMP_DIFFUSION;
+    MarketModel currentModel = MarketModel::TRENDING;
     // ==========================================================================
     std::string modelName;
     switch(currentModel) {
@@ -145,6 +145,9 @@ int main() {
     std::filesystem::create_directories("output");
     std::ofstream initFile("/dev/shm/features_binary.dat", std::ios::binary | std::ios::trunc);
     initFile.close();
+
+    std::ofstream initTrades("output/bot_trades.csv", std::ios::trunc);
+    initTrades.close();
 
     auto startGlobal = std::chrono::high_resolution_clock::now();
     
@@ -462,7 +465,9 @@ int main() {
                     file.write(reinterpret_cast<const char*>(memoryBuffer.data()), memoryBuffer.size() * sizeof(StateVector));
                 }
 
-                
+                // Write the bot's trade memory to the CSV for this simulation path
+                myMonteCarloBot.printReport();
+
                 totalTradesSim.store(bucketCounter, std::memory_order_release);
                 totalRawTradesSim.store(tradeCount, std::memory_order_release);
             });
