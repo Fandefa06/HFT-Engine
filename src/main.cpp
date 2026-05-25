@@ -50,7 +50,7 @@ std::string formatElapsedTime(double total_seconds) {
     uint64_t hours = t / 3600;
     t %= 3600;
     uint64_t minutes = t / 60;
-    t %= 60; // <--- THE BUG FIX: Extract remaining seconds properly
+    t %= 60; 
     double seconds = t + fractional;
 
     std::ostringstream oss;
