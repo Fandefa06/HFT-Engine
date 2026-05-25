@@ -123,11 +123,11 @@ You can customize the simulation mode directly via the Master Toggle in `src/mai
 
 This engine is being incrementally upgraded to bridge the gap between academic simulation and institutional-grade infrastructure.
 
-- [ ]**Phase 1: Networking & Real-World Data Ingestion**
-    *   Build a Market Data Handler in Python/C++ to ingest live order flow via WebSockets (e.g., Polymarket API).
-    *   Implement a lightweight FIX Protocol parser for standardized exchange messaging.
-- [*]**Phase 2: Quantitative Research & AI Integration (In Progress)**
-    *   Develop stochastic Monte Carlo simulator (Completed)
-    *  Integrate C++ execution bots (SimpleBot) to track PnL (Next Step)
+- [ ] **Phase 1: Networking & Real-World Data Ingestion**
+    -   Build a Market Data Handler in Python/C++ to ingest live order flow via WebSockets (e.g., Polymarket API).
+    -   Implement a lightweight FIX Protocol parser for standardized exchange messaging.
+- [X] **Phase 2: Quantitative Research & AI Integration (In Progress)**
+    -   Develop stochastic Monte Carlo simulator (Completed)
+    -  Integrate C++ execution bots (SimpleBot) to track PnL (Next Step)
 
 ## AND MORE TO COME
